@@ -16,13 +16,32 @@ const User = sequelize.define('User', {
     type: DataTypes.STRING(100),
     allowNull: true,
   },
+  email: {
+    type: DataTypes.STRING(100),
+    allowNull: true,
+  },
+  is_active: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true,
+  },
   last_login: {
     type: DataTypes.DATE,
+    allowNull: true,
+  },
+  login_count: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
+  device_info: {
+    type: DataTypes.TEXT,
     allowNull: true,
   },
 }, {
   timestamps: true,
   tableName: 'users',
+  underscored: false, // Use camelCase for timestamps
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
 });
 
 module.exports = User;

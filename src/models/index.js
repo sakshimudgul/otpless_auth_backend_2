@@ -2,8 +2,8 @@ const { sequelize } = require('../config/database');
 const User = require('./User');
 const OTP = require('./OTP');
 
-// Simple associations without foreign key constraints
-User.hasMany(OTP, { foreignKey: 'user_id', constraints: false });
-OTP.belongsTo(User, { foreignKey: 'user_id', constraints: false });
+// Define associations
+User.hasMany(OTP, { foreignKey: 'user_id', as: 'otps' });
+OTP.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
 module.exports = { sequelize, User, OTP };
