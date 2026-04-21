@@ -1,10 +1,15 @@
 const express = require('express');
-const { sendOtp, verifyOtp, getUserDetails } = require('../controllers/authController');
+const { sendSmsOtp, verifySmsOtp } = require('../controllers/smsController');
+const { sendWhatsAppOtp, verifyWhatsAppOtp } = require('../controllers/whatsappController');
 
 const router = express.Router();
 
-router.post('/send-otp', sendOtp);
-router.post('/verify-otp', verifyOtp);
-router.get('/user/:phone', getUserDetails);
+// SMS routes
+router.post('/send-sms-otp', sendSmsOtp);
+router.post('/verify-sms-otp', verifySmsOtp);
+
+// WhatsApp routes
+router.post('/send-whatsapp-otp', sendWhatsAppOtp);
+router.post('/verify-whatsapp-otp', verifyWhatsAppOtp);
 
 module.exports = router;

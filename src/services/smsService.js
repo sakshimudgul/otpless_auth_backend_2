@@ -1,16 +1,16 @@
 const axios = require('axios');
 require('dotenv').config();
 
-const otpStore = new Map();
+const smsOtpStore = new Map();
 
-const generateOTP = () => {
+const generateSMSOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
 const sendSMS = async (phoneNumber, message) => {
   const cleanPhone = phoneNumber.replace(/\D/g, '');
   
-  console.log(`📤 Sending SMS to: ${cleanPhone}`);
+  console.log(`📤 [SMS] Sending to: ${cleanPhone}`);
   console.log(`💬 Message: ${message}`);
   
   try {
@@ -28,7 +28,13 @@ const sendSMS = async (phoneNumber, message) => {
     const response = await axios.get(url, { timeout: 15000 });
     const result = response.data;
     
-    console.log(`📨 SMS Response: ${result}`);
+    console.log(`📨 [SMS] Response: ${result}`);
+    
+    if (result && !result.includes('Error')) {
+      console.log(`✅ SMS sent successfully to ${cleanPhone}!`);
+      return { success: true, messageId: result };
+    }
+    
     return { success: true };
   } catch (error) {
     console.error(`❌ SMS error:`, error.message);
@@ -36,51 +42,48 @@ const sendSMS = async (phoneNumber, message) => {
   }
 };
 
-const sendOTP = async (phoneNumber, otp) => {
+const sendSMSOTP = async (phoneNumber, name = 'User') => {
   const cleanPhone = phoneNumber.replace(/\D/g, '');
+  const otp = generateSMSOTP();
+  const expiresAt = Date.now() + 10 * 60 * 1000;
   
-  otpStore.set(cleanPhone, {
+  smsOtpStore.set(cleanPhone, {
     otp: otp,
-    expiresAt: Date.now() + 10 * 60 * 1000,
-    attempts: 0
+    expiresAt: expiresAt,
+    attempts: 0,
+    name: name
   });
   
-  const message = `Dear User Your OTP is : ${otp}. Rich Solutions`;
+  const message = `Dear ${name}, Your OTP is: ${otp}. Valid for 10 minutes. - Rich Solutions`;
   
   console.log(`=========================================`);
-  console.log(`📱 OTP: ${otp} for ${cleanPhone}`);
+  console.log(`📱 [SMS OTP] ${otp} for ${cleanPhone}`);
   console.log(`=========================================`);
   
-  const smsResult = await sendSMS(cleanPhone, message);
-  return { success: true, smsSent: smsResult.success };
+  const result = await sendSMS(cleanPhone, message);
+  
+  return {
+    success: result.success,
+    otp: otp,
+    messageId: result.messageId
+  };
 };
 
-const verifyOTP = (phoneNumber, userOtp) => {
+const verifySMSOTP = (phoneNumber, userOtp) => {
   const cleanPhone = phoneNumber.replace(/\D/g, '');
-  const record = otpStore.get(cleanPhone);
+  const record = smsOtpStore.get(cleanPhone);
   
-  if (!record) {
-    return { success: false, message: 'No OTP found' };
-  }
-  
-  if (Date.now() > record.expiresAt) {
-    otpStore.delete(cleanPhone);
-    return { success: false, message: 'OTP expired' };
-  }
-  
-  if (record.attempts >= 3) {
-    otpStore.delete(cleanPhone);
-    return { success: false, message: 'Too many attempts' };
-  }
-  
+  if (!record) return { success: false, message: 'No OTP found' };
+  if (Date.now() > record.expiresAt) return { success: false, message: 'OTP expired' };
+  if (record.attempts >= 3) return { success: false, message: 'Too many attempts' };
   if (record.otp !== userOtp) {
     record.attempts++;
-    otpStore.set(cleanPhone, record);
+    smsOtpStore.set(cleanPhone, record);
     return { success: false, message: `Invalid OTP. ${3 - record.attempts} left` };
   }
   
-  otpStore.delete(cleanPhone);
-  return { success: true, message: 'OTP verified' };
+  smsOtpStore.delete(cleanPhone);
+  return { success: true, message: 'OTP verified', name: record.name };
 };
 
-module.exports = { generateOTP, sendOTP, verifyOTP };
+module.exports = { generateSMSOTP, sendSMSOTP, verifySMSOTP };
