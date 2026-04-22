@@ -11,11 +11,11 @@ app.use(cors({ origin: ['http://localhost:5173', 'http://localhost:3000'], crede
 app.use(express.json());
 app.use('/api/auth', authRoutes);
 
-app.get('/health', (req, res) => res.json({ status: 'OK' }));
+app.get('/health', (req, res) => res.json({ status: 'OK', database: 'Turso' }));
 
 const startServer = async () => {
   await connectDB();
-  app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+  app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT} with Turso database`));
 };
 
 startServer();

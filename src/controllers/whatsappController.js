@@ -16,20 +16,37 @@ const sendWhatsAppOtp = async (req, res) => {
     const cleanPhone = phone.replace(/\D/g, '');
     const result = await sendWhatsAppOTP(cleanPhone, name || 'User');
     
-    let user = await User.findOne({ where: { phone_number: cleanPhone } });
-    if (!user) user = await User.create({ phone_number: cleanPhone, name: name || null });
+    // Find or create user - handle duplicate error
+    let user = await User.findByPhone(cleanPhone);
+    if (!user) {
+      try {
+        user = await User.create({ phone_number: cleanPhone, name: name || null });
+      } catch (dbError) {
+        // If duplicate, fetch existing user
+        user = await User.findByPhone(cleanPhone);
+      }
+    }
     
+    // Invalidate old OTPs
+    await OTP.invalidateAll(cleanPhone);
+    
+    // Create new OTP
     await OTP.create({
       phone_number: cleanPhone,
       otp_code: result.otp,
-      expires_at: new Date(Date.now() + 10 * 60 * 1000),
+      expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
       user_id: user.id,
       delivery_method: 'whatsapp'
     });
     
-    res.json({ success: result.success, message: 'WhatsApp OTP sent', demoOtp: result.otp });
+    res.json({
+      success: true,
+      message: result.demo ? 'WhatsApp OTP (Demo Mode - Check console)' : 'WhatsApp OTP sent',
+      demoOtp: result.otp,
+      demo: result.demo || true
+    });
   } catch (error) {
-    console.error(error);
+    console.error('Send WhatsApp OTP error:', error);
     res.status(500).json({ error: 'Failed to send WhatsApp OTP' });
   }
 };
@@ -43,17 +60,24 @@ const verifyWhatsAppOtp = async (req, res) => {
     const verification = verifyWhatsAppOTP(cleanPhone, otp);
     if (!verification.success) return res.status(401).json({ error: verification.message });
     
-    let user = await User.findOne({ where: { phone_number: cleanPhone } });
-    if (!user) user = await User.create({ phone_number: cleanPhone, name: name || 'User' });
-    else if (name) user.name = name, await user.save();
+    let user = await User.findByPhone(cleanPhone);
+    if (!user) {
+      user = await User.create({ phone_number: cleanPhone, name: name || verification.name || 'User' });
+    } else if (name) {
+      await User.update(user.id, { name });
+    }
     
-    await OTP.update({ is_verified: true, verified_at: new Date() },
-      { where: { phone_number: cleanPhone, otp_code: otp, is_verified: false } });
+    await User.update(user.id, { last_login: new Date().toISOString() });
     
     const token = generateToken(user.id, user.phone_number);
-    res.json({ success: true, message: 'WhatsApp OTP verified', token, user: { id: user.id, name: user.name, phoneNumber: user.phone_number } });
+    res.json({ 
+      success: true, 
+      message: 'WhatsApp OTP verified', 
+      token, 
+      user: { id: user.id, name: user.name, phoneNumber: user.phone_number } 
+    });
   } catch (error) {
-    console.error(error);
+    console.error('Verify WhatsApp OTP error:', error);
     res.status(500).json({ error: 'Failed to verify WhatsApp OTP' });
   }
 };
