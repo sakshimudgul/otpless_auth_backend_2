@@ -1,45 +1,66 @@
-const { getOne, getAll, run } = require('../config/database');
-const crypto = require('crypto');
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/database');
+const bcrypt = require('bcryptjs');
 
-const User = {
-  findByPhone: async (phoneNumber) => {
-    return await getOne('SELECT * FROM users WHERE phone_number = ?', [phoneNumber]);
+const User = sequelize.define('User', {
+  id: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true,
   },
-
-  findById: async (id) => {
-    return await getOne('SELECT * FROM users WHERE id = ?', [id]);
+  name: {
+    type: DataTypes.STRING,
+    allowNull: false,
   },
-
-  create: async (data) => {
-    const id = crypto.randomUUID();
-    try {
-      await run(
-        'INSERT INTO users (id, phone_number, name) VALUES (?, ?, ?)',
-        [id, data.phone_number, data.name || null]
-      );
-      return await User.findById(id);
-    } catch (error) {
-      if (error.message.includes('UNIQUE constraint failed')) {
-        // User already exists, fetch and return existing
-        return await User.findByPhone(data.phone_number);
-      }
-      throw error;
-    }
+  email: {
+    type: DataTypes.STRING,
+    unique: true,
+    allowNull: true,
   },
-
-  update: async (id, data) => {
-    if (data.name) {
-      await run('UPDATE users SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [data.name, id]);
-    }
-    if (data.last_login) {
-      await run('UPDATE users SET last_login = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [data.last_login, id]);
-    }
-    return await User.findById(id);
+  phone_number: {
+    type: DataTypes.STRING(20),
+    unique: true,
+    allowNull: false,
+    field: 'phone_number',
   },
+  password: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  role: {
+    type: DataTypes.ENUM('admin', 'user'),
+    defaultValue: 'user',
+  },
+  is_active: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true,
+  },
+  last_login: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+}, {
+  timestamps: true,
+  tableName: 'users',
+});
 
-  findAll: async () => {
-    return await getAll('SELECT * FROM users ORDER BY created_at DESC');
+// Hash password before save
+User.beforeCreate = async (user) => {
+  if (user.password) {
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(user.password, salt);
   }
+};
+
+User.beforeUpdate = async (user) => {
+  if (user.changed('password')) {
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(user.password, salt);
+  }
+};
+
+User.prototype.validatePassword = async function(password) {
+  return await bcrypt.compare(password, this.password);
 };
 
 module.exports = User;

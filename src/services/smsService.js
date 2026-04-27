@@ -1,17 +1,20 @@
 const axios = require('axios');
 require('dotenv').config();
 
-const smsOtpStore = new Map();
-
-const generateSMSOTP = () => {
+const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-const sendSMS = async (phoneNumber, message) => {
+// Send SMS via SMSJust API
+const sendSMS = async (phoneNumber, otp, name = 'User') => {
   const cleanPhone = phoneNumber.replace(/\D/g, '');
+  const message = `Dear ${name}, Your OTP is: ${otp}. Valid for 10 minutes. - Rich Solutions`;
   
-  console.log(`📤 [SMS] Sending to: ${cleanPhone}`);
+  console.log(`=========================================`);
+  console.log(`📤 Sending SMS to: ${cleanPhone}`);
+  console.log(`🔑 OTP: ${otp}`);
   console.log(`💬 Message: ${message}`);
+  console.log(`=========================================`);
   
   try {
     const params = new URLSearchParams({
@@ -25,65 +28,82 @@ const sendSMS = async (phoneNumber, message) => {
     });
     
     const url = `${process.env.SMS_API_URL}?${params.toString()}`;
+    console.log(`📨 API URL: ${url.substring(0, 150)}...`);
+    
     const response = await axios.get(url, { timeout: 15000 });
     const result = response.data;
     
-    console.log(`📨 [SMS] Response: ${result}`);
+    console.log(`📨 SMS Response: ${result}`);
     
     if (result && !result.includes('Error')) {
       console.log(`✅ SMS sent successfully to ${cleanPhone}!`);
-      return { success: true, messageId: result };
+      return true;
     }
     
-    return { success: true };
+    console.log(`⚠️ SMS response: ${result}`);
+    return true;
   } catch (error) {
     console.error(`❌ SMS error:`, error.message);
-    return { success: false, error: error.message };
+    if (error.response) {
+      console.error(`Response:`, error.response.data);
+    }
+    return false;
   }
 };
 
-const sendSMSOTP = async (phoneNumber, name = 'User') => {
+// Send WhatsApp message
+const sendWhatsApp = async (phoneNumber, otp, name = 'User') => {
   const cleanPhone = phoneNumber.replace(/\D/g, '');
-  const otp = generateSMSOTP();
-  const expiresAt = Date.now() + 10 * 60 * 1000;
-  
-  smsOtpStore.set(cleanPhone, {
-    otp: otp,
-    expiresAt: expiresAt,
-    attempts: 0,
-    name: name
-  });
-  
-  const message = `Dear ${name}, Your OTP is: ${otp}. Valid for 10 minutes. - Rich Solutions`;
+  const message = `🔐 OTP Verification\n\nDear ${name},\n\nYour OTP is: ${otp}\n\nValid for 10 minutes\n\n- Rich Solutions`;
   
   console.log(`=========================================`);
-  console.log(`📱 [SMS OTP] ${otp} for ${cleanPhone}`);
+  console.log(`📤 Sending WhatsApp to: ${cleanPhone}`);
+  console.log(`🔑 OTP: ${otp}`);
+  console.log(`💬 Message: ${message}`);
   console.log(`=========================================`);
   
-  const result = await sendSMS(cleanPhone, message);
-  
-  return {
-    success: result.success,
-    otp: otp,
-    messageId: result.messageId
-  };
-};
-
-const verifySMSOTP = (phoneNumber, userOtp) => {
-  const cleanPhone = phoneNumber.replace(/\D/g, '');
-  const record = smsOtpStore.get(cleanPhone);
-  
-  if (!record) return { success: false, message: 'No OTP found' };
-  if (Date.now() > record.expiresAt) return { success: false, message: 'OTP expired' };
-  if (record.attempts >= 3) return { success: false, message: 'Too many attempts' };
-  if (record.otp !== userOtp) {
-    record.attempts++;
-    smsOtpStore.set(cleanPhone, record);
-    return { success: false, message: `Invalid OTP. ${3 - record.attempts} left` };
+  try {
+    const apiKey = process.env.WHATSAPP_API_KEY;
+    const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    
+    if (!apiKey) {
+      console.log(`⚠️ WhatsApp API key not configured, using demo mode`);
+      return true;
+    }
+    
+    const url = `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`;
+    
+    const requestBody = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: cleanPhone,
+      type: "text",
+      text: { body: message }
+    };
+    
+    const response = await axios.post(url, requestBody, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      timeout: 15000
+    });
+    
+    console.log(`📨 WhatsApp Response:`, response.data);
+    
+    if (response.data && response.data.messages) {
+      console.log(`✅ WhatsApp sent successfully to ${cleanPhone}!`);
+      return true;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error(`❌ WhatsApp error:`, error.message);
+    if (error.response) {
+      console.error(`Response:`, error.response.data);
+    }
+    return false;
   }
-  
-  smsOtpStore.delete(cleanPhone);
-  return { success: true, message: 'OTP verified', name: record.name };
 };
 
-module.exports = { generateSMSOTP, sendSMSOTP, verifySMSOTP };
+module.exports = { generateOTP, sendSMS, sendWhatsApp };

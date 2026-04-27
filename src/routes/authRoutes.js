@@ -1,15 +1,16 @@
 const express = require('express');
-const { sendSmsOtp, verifySmsOtp } = require('../controllers/smsController');
-const { sendWhatsAppOtp, verifyWhatsAppOtp } = require('../controllers/whatsappController');
+const { adminLogin, sendUserOtp, verifyUserOtp, getMe, logout } = require('../controllers/authController');
+const { protect } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
-// SMS routes
-router.post('/send-sms-otp', sendSmsOtp);
-router.post('/verify-sms-otp', verifySmsOtp);
+// Public routes
+router.post('/admin-login', adminLogin);
+router.post('/send-otp', sendUserOtp);        // This is the endpoint your frontend calls
+router.post('/verify-otp', verifyUserOtp);    // This is the endpoint your frontend calls
 
-// WhatsApp routes
-router.post('/send-whatsapp-otp', sendWhatsAppOtp);
-router.post('/verify-whatsapp-otp', verifyWhatsAppOtp);
+// Protected routes
+router.get('/me', protect, getMe);
+router.post('/logout', protect, logout);
 
 module.exports = router;
