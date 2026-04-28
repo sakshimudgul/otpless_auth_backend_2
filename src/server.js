@@ -47,10 +47,10 @@ const startServer = async () => {
   
   app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`✅ Health check: http://localhost:${PORT}/health`);
-    console.log(`✅ Test: http://localhost:${PORT}/test`);
-    console.log(`✅ Admin login: POST http://localhost:${PORT}/api/auth/admin-login`);
-    console.log(`✅ WhatsApp send: POST http://localhost:${PORT}/api/whatsapp/send`);
+    // console.log(`✅ Health check: http://localhost:${PORT}/health`);
+    // console.log(`✅ Test: http://localhost:${PORT}/test`);
+    // console.log(`✅ Admin login: POST http://localhost:${PORT}/api/auth/admin-login`);
+    // console.log(`✅ WhatsApp send: POST http://localhost:${PORT}/api/whatsapp/send`);
   });
 };
 
