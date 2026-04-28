@@ -1,16 +1,22 @@
 const express = require('express');
 const { adminLogin, sendUserOtp, verifyUserOtp, getMe, logout } = require('../controllers/authController');
-const { protect } = require('../middleware/authMiddleware');
+const { getAllUsers, createUser, deleteUser } = require('../controllers/adminController');
+const { protect, adminOnly } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
 // Public routes
 router.post('/admin-login', adminLogin);
-router.post('/send-otp', sendUserOtp);        // This is the endpoint your frontend calls
-router.post('/verify-otp', verifyUserOtp);    // This is the endpoint your frontend calls
+router.post('/send-otp', sendUserOtp);
+router.post('/verify-otp', verifyUserOtp);
 
 // Protected routes
 router.get('/me', protect, getMe);
 router.post('/logout', protect, logout);
+
+// Admin only routes
+router.get('/admin/users', protect, adminOnly, getAllUsers);
+router.post('/admin/users', protect, adminOnly, createUser);
+router.delete('/admin/users/:id', protect, adminOnly, deleteUser);
 
 module.exports = router;

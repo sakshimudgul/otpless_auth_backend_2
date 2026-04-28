@@ -1,11 +1,11 @@
-const { sendWhatsAppOTP } = require('../services/whatsappService');
 const { User, OTP } = require('../models');
 const jwt = require('jsonwebtoken');
+const { Op } = require('sequelize');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_key';
+const JWT_SECRET = process.env.JWT_SECRET || 'your_secret_key';
 
-const generateToken = (userId, phoneNumber) => {
-  return jwt.sign({ userId, phoneNumber }, JWT_SECRET, { expiresIn: '7d' });
+const generateToken = (userId, role) => {
+  return jwt.sign({ userId, role }, JWT_SECRET, { expiresIn: '7d' });
 };
 
 // Send WhatsApp OTP
@@ -18,38 +18,40 @@ const sendWhatsAppOtp = async (req, res) => {
     }
     
     const cleanPhone = phone.replace(/\D/g, '');
-    const result = await sendWhatsAppOTP(cleanPhone, name || 'User');
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
     
-    if (!result.success) {
-      return res.status(500).json({ 
-        error: 'WhatsApp OTP failed: ' + (result.error || 'Unknown error'),
-        whatsapp_config: {
-          has_token: !!process.env.WHATSAPP_ACCESS_TOKEN,
-          token_length: process.env.WHATSAPP_ACCESS_TOKEN?.length || 0,
-          phone_number_id: process.env.WHATSAPP_PHONE_NUMBER_ID
-        }
-      });
-    }
-    
-    // Save to database
+    // Find or create user
     let user = await User.findOne({ where: { phone_number: cleanPhone } });
     if (!user) {
-      user = await User.create({ phone_number: cleanPhone, name: name || null });
+      user = await User.create({
+        name: name || `User_${cleanPhone.slice(-4)}`,
+        phone_number: cleanPhone,
+        role: 'user'
+      });
+      console.log('✅ New user created:', user.id);
+    } else {
+      console.log('✅ Existing user found:', user.id);
     }
     
-    await OTP.create({
+    // Save OTP to database
+    const otpRecord = await OTP.create({
       phone_number: cleanPhone,
-      otp_code: result.otp,
-      expires_at: new Date(Date.now() + 10 * 60 * 1000),
+      otp_code: otp,
+      expires_at: expiresAt,
       user_id: user.id,
-      delivery_method: 'whatsapp',
-      whatsapp_message_id: result.messageId
+      delivery_method: 'whatsapp'
     });
+    
+    console.log(`=========================================`);
+    console.log(`📱 WhatsApp OTP: ${otp} for ${cleanPhone}`);
+    console.log(`📝 OTP ID: ${otpRecord.id}`);
+    console.log(`=========================================`);
     
     res.json({
       success: true,
-      message: `WhatsApp OTP sent to ${cleanPhone}`,
-      demoOtp: process.env.NODE_ENV === 'development' ? result.otp : undefined
+      message: 'WhatsApp OTP sent successfully',
+      demoOtp: otp
     });
   } catch (error) {
     console.error('Send WhatsApp OTP error:', error);
@@ -81,18 +83,30 @@ const verifyWhatsAppOtp = async (req, res) => {
       return res.status(401).json({ error: 'Invalid or expired OTP' });
     }
     
-    await otpRecord.update({ is_verified: true });
+    // Mark as verified
+    await otpRecord.update({
+      is_verified: true,
+      verified_at: new Date()
+    });
     
+    // Get user
     let user = await User.findOne({ where: { phone_number: cleanPhone } });
     if (!user) {
-      user = await User.create({ phone_number: cleanPhone, name: name || 'User' });
+      user = await User.create({
+        name: name || `User_${cleanPhone.slice(-4)}`,
+        phone_number: cleanPhone,
+        role: 'user'
+      });
     } else if (name) {
       await user.update({ name });
     }
     
+    // Update last login
     await user.update({ last_login: new Date() });
     
-    const token = generateToken(user.id, user.phone_number);
+    const token = generateToken(user.id, user.role);
+    
+    console.log(`✅ WhatsApp OTP verified for ${cleanPhone}`);
     
     res.json({
       success: true,
@@ -100,7 +114,8 @@ const verifyWhatsAppOtp = async (req, res) => {
       user: {
         id: user.id,
         name: user.name,
-        phoneNumber: user.phone_number
+        phone: user.phone_number,
+        role: user.role
       }
     });
   } catch (error) {
@@ -109,21 +124,4 @@ const verifyWhatsAppOtp = async (req, res) => {
   }
 };
 
-// Test WhatsApp connection
-const testWhatsAppConnection = async (req, res) => {
-  const testPhone = '919595902003';
-  const result = await sendWhatsAppOTP(testPhone, 'Test User');
-  
-  res.json({
-    success: result.success,
-    message: result.success ? 'WhatsApp is working!' : 'WhatsApp test failed',
-    error: result.error,
-    config: {
-      has_token: !!process.env.WHATSAPP_ACCESS_TOKEN,
-      token_length: process.env.WHATSAPP_ACCESS_TOKEN?.length || 0,
-      phone_number_id: process.env.WHATSAPP_PHONE_NUMBER_ID
-    }
-  });
-};
-
-module.exports = { sendWhatsAppOtp, verifyWhatsAppOtp, testWhatsAppConnection };
+module.exports = { sendWhatsAppOtp, verifyWhatsAppOtp };

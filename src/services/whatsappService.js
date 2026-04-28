@@ -1,91 +1,97 @@
 const axios = require('axios');
-require('dotenv').config();
+const { User, OTP } = require('../models');
+const jwt = require('jsonwebtoken');
+const { Op } = require('sequelize');
 
-const generateWhatsAppOTP = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-};
+const JWT_SECRET = process.env.JWT_SECRET || 'your_secret_key';
 
-const formatWhatsAppMessage = (otp, name = 'User') => {
-  return `🔐 *OTP Verification*\n\nDear *${name}*,\n\nYour OTP for verification is:\n*${otp}*\n\n⏰ Valid for 10 minutes\n\n- Rich Solutions`;
-};
-
-// Send WhatsApp message using Meta Cloud API
-const sendWhatsAppMessage = async (phoneNumber, message) => {
-  const cleanPhone = phoneNumber.replace(/\D/g, '');
-  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-  
-  console.log(`📱 Sending WhatsApp to: ${cleanPhone}`);
-  
-  // Check if access token is valid (Meta tokens are long strings, not UUIDs)
-  if (!accessToken || accessToken.length < 50) {
-    console.log(`❌ Invalid WhatsApp access token. Please get a valid Meta token.`);
-    console.log(`💡 Get token from: https://developers.facebook.com/apps/`);
-    return { success: false, error: 'Invalid WhatsApp token' };
+class WhatsAppService {
+  async sendOTP(phoneNumber, name = 'User') {
+    const cleanPhone = phoneNumber.replace(/\D/g, '');
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    
+    // Find or create user
+    let user = await User.findOne({ where: { phone_number: cleanPhone } });
+    if (!user) {
+      user = await User.create({
+        name: name,
+        phone_number: cleanPhone,
+        role: 'user'
+      });
+      console.log('✅ New user created:', user.id);
+    } else {
+      console.log('✅ Existing user found:', user.id);
+    }
+    
+    // Save OTP to database
+    const otpRecord = await OTP.create({
+      phone_number: cleanPhone,
+      otp_code: otp,
+      expires_at: expiresAt,
+      user_id: user.id,
+      delivery_method: 'whatsapp'
+    });
+    
+    console.log(`=========================================`);
+    console.log(`📱 WhatsApp OTP: ${otp} for ${cleanPhone}`);
+    console.log(`📝 OTP ID: ${otpRecord.id}`);
+    console.log(`=========================================`);
+    
+    return {
+      success: true,
+      otp: otp,
+      otpId: otpRecord.id,
+      userId: user.id
+    };
   }
 
-  try {
-    const response = await axios.post(
-      `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
-      {
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to: cleanPhone,
-        type: "text",
-        text: { body: message }
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 15000
+  async verifyOTP(phoneNumber, otpCode) {
+    const cleanPhone = phoneNumber.replace(/\D/g, '');
+    
+    const otpRecord = await OTP.findOne({
+      where: {
+        phone_number: cleanPhone,
+        otp_code: otpCode,
+        is_verified: false,
+        expires_at: { [Op.gt]: new Date() }
       }
+    });
+    
+    if (!otpRecord) {
+      return { success: false, message: 'Invalid or expired OTP' };
+    }
+    
+    // Mark as verified
+    await otpRecord.update({
+      is_verified: true,
+      verified_at: new Date()
+    });
+    
+    // Get user
+    const user = await User.findByPk(otpRecord.user_id);
+    await user.update({ last_login: new Date() });
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user.id, phone: user.phone_number, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '7d' }
     );
     
-    console.log(`✅ WhatsApp sent successfully!`);
-    console.log(`📨 Message ID:`, response.data?.messages?.[0]?.id);
-    return { success: true, messageId: response.data?.messages?.[0]?.id };
-  } catch (error) {
-    console.error(`❌ WhatsApp error:`);
-    if (error.response) {
-      console.error(`   Status: ${error.response.status}`);
-      console.error(`   Error:`, error.response.data?.error?.message || error.response.data);
-      
-      if (error.response.status === 401) {
-        console.error(`   💡 Your access token is invalid or expired.`);
-        console.error(`   💡 Get a new token from Meta Business Suite.`);
-      } else if (error.response.status === 403) {
-        console.error(`   💡 Your WhatsApp Business account is not active.`);
-      } else if (error.response.status === 404) {
-        console.error(`   💡 Phone number ID is incorrect.`);
+    console.log(`✅ WhatsApp OTP verified for ${cleanPhone}`);
+    
+    return {
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        phone: user.phone_number,
+        role: user.role
       }
-    } else {
-      console.error(`   ${error.message}`);
-    }
-    return { success: false, error: error.message };
+    };
   }
-};
+}
 
-// Send OTP via WhatsApp
-const sendWhatsAppOTP = async (phoneNumber, name = 'User') => {
-  const cleanPhone = phoneNumber.replace(/\D/g, '');
-  const otp = generateWhatsAppOTP();
-  
-  const message = formatWhatsAppMessage(otp, name);
-  
-  console.log(`=========================================`);
-  console.log(`📱 WhatsApp OTP: ${otp} for ${cleanPhone}`);
-  console.log(`=========================================`);
-  
-  const result = await sendWhatsAppMessage(cleanPhone, message);
-  
-  return {
-    success: result.success,
-    otp: otp,
-    messageId: result.messageId,
-    error: result.error
-  };
-};
-
-module.exports = { generateWhatsAppOTP, sendWhatsAppOTP, formatWhatsAppMessage };
+module.exports = WhatsAppService;
