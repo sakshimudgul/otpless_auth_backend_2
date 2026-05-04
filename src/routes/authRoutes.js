@@ -1,5 +1,6 @@
 const express = require('express');
 const { adminLogin, sendUserOtp, verifyUserOtp, getMe, logout } = require('../controllers/authController');
+const { sendSmsOtp, verifySmsOtp } = require('../controllers/smsController');  // ADD THIS
 const { getAllUsers, createUser, deleteUser } = require('../controllers/adminController');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 
@@ -7,8 +8,8 @@ const router = express.Router();
 
 // Public routes
 router.post('/admin-login', adminLogin);
-router.post('/send-otp', sendUserOtp);
-router.post('/verify-otp', verifyUserOtp);
+router.post('/send-otp', sendSmsOtp);  // CHANGE THIS - use sendSmsOtp instead
+router.post('/verify-otp', verifySmsOtp);  // CHANGE THIS - use verifySmsOtp instead
 
 // Protected routes
 router.get('/me', protect, getMe);

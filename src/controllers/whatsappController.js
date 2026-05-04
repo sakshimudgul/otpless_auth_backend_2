@@ -1,11 +1,97 @@
 const { User, OTP } = require('../models');
 const jwt = require('jsonwebtoken');
 const { Op } = require('sequelize');
+const axios = require('axios');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your_secret_key';
 
 const generateToken = (userId, role) => {
   return jwt.sign({ userId, role }, JWT_SECRET, { expiresIn: '7d' });
+};
+
+// Send WhatsApp message using Pinbot API with your exact format
+const sendWhatsAppMessage = async (phoneNumber, otp, name = 'User') => {
+  const cleanPhone = phoneNumber.replace(/\D/g, '');
+  
+  console.log(`📤 Sending WhatsApp to: ${cleanPhone}`);
+  console.log(`🔑 OTP: ${otp}`);
+  
+  const pinbotApiKey = process.env.PINBOT_API_KEY;
+  const pinbotPhoneNumberId = process.env.PINBOT_PHONE_NUMBER_ID;
+  const pinbotApiUrl = process.env.PINBOT_API_URL || 'https://partnersv1.pinbot.ai/v3';
+  
+  if (!pinbotApiKey) {
+    console.log(`❌ PINBOT_API_KEY not found`);
+    return false;
+  }
+  
+  try {
+    // Using the exact format from your curl
+    const url = `${pinbotApiUrl}/${pinbotPhoneNumberId}/messages`;
+    
+    const requestBody = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: parseInt(cleanPhone), // Send as number, not string
+      type: "template",
+      template: {
+        name: "auth_template_001",
+        language: {
+          code: "en"
+        },
+        components: [
+          {
+            type: "body",
+            parameters: [
+              {
+                type: "text",
+                text: otp
+              }
+            ]
+          },
+          {
+            type: "button",
+            sub_type: "url",
+            index: "0",
+            parameters: [
+              {
+                type: "payload",
+                payload: ""
+              }
+            ]
+          }
+        ]
+      }
+    };
+    
+    console.log(`📨 Sending to Pinbot: ${url}`);
+    console.log(`📨 Request Body:`, JSON.stringify(requestBody, null, 2));
+    
+    const response = await axios.post(url, requestBody, {
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': pinbotApiKey
+      },
+      timeout: 30000
+    });
+    
+    console.log(`📨 Pinbot Response Status: ${response.status}`);
+    console.log(`📨 Pinbot Response Data:`, response.data);
+    
+    if (response.status === 200 || response.status === 201) {
+      console.log(`✅ WhatsApp sent successfully via Pinbot!`);
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error(`❌ WhatsApp error:`, error.message);
+    if (error.response) {
+      console.error(`   Status: ${error.response.status}`);
+      console.error(`   Data:`, JSON.stringify(error.response.data, null, 2));
+    }
+    return false;
+  }
 };
 
 // Send WhatsApp OTP
@@ -34,6 +120,9 @@ const sendWhatsAppOtp = async (req, res) => {
       console.log('✅ Existing user found:', user.id);
     }
     
+    // Send WhatsApp message using template
+    const whatsappSent = await sendWhatsAppMessage(cleanPhone, otp, name || user.name || 'User');
+    
     // Save OTP to database
     const otpRecord = await OTP.create({
       phone_number: cleanPhone,
@@ -46,11 +135,12 @@ const sendWhatsAppOtp = async (req, res) => {
     console.log(`=========================================`);
     console.log(`📱 WhatsApp OTP: ${otp} for ${cleanPhone}`);
     console.log(`📝 OTP ID: ${otpRecord.id}`);
+    console.log(`📨 WhatsApp Sent: ${whatsappSent ? '✅ Yes' : '❌ No'}`);
     console.log(`=========================================`);
     
     res.json({
       success: true,
-      message: 'WhatsApp OTP sent successfully',
+      message: whatsappSent ? 'WhatsApp OTP sent successfully' : 'WhatsApp OTP generated (sending may have failed)',
       demoOtp: otp
     });
   } catch (error) {

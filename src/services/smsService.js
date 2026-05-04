@@ -1,20 +1,16 @@
 const axios = require('axios');
 require('dotenv').config();
 
-const generateOTP = () => {
+// In-memory OTP storage (for verification)
+const smsOtpStore = new Map();
+
+const generateSMSOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
 // Send SMS via SMSJust API
-const sendSMS = async (phoneNumber, otp, name = 'User') => {
+const sendSMS = async (phoneNumber, message) => {
   const cleanPhone = phoneNumber.replace(/\D/g, '');
-  const message = `Dear ${name}, Your OTP is: ${otp}. Valid for 10 minutes. - Rich Solutions`;
-  
-  console.log(`=========================================`);
-  console.log(`📤 Sending SMS to: ${cleanPhone}`);
-  console.log(`🔑 OTP: ${otp}`);
-  console.log(`💬 Message: ${message}`);
-  console.log(`=========================================`);
   
   try {
     const params = new URLSearchParams({
@@ -28,98 +24,83 @@ const sendSMS = async (phoneNumber, otp, name = 'User') => {
     });
     
     const url = `${process.env.SMS_API_URL}?${params.toString()}`;
-    console.log(`📨 API URL: ${url.substring(0, 150)}...`);
-    
     const response = await axios.get(url, { timeout: 15000 });
     const result = response.data;
     
     console.log(`📨 SMS Response: ${result}`);
     
-    if (result && !result.includes('Error')) {
-      console.log(`✅ SMS sent successfully to ${cleanPhone}!`);
-      return true;
+    if (result && result.match(/\d+-\d{4}_\d{2}_\d{2}/)) {
+      return { success: true, messageId: result };
     }
     
-    console.log(`⚠️ SMS response: ${result}`);
-    return true;
+    return { success: true };
   } catch (error) {
     console.error(`❌ SMS error:`, error.message);
-    if (error.response) {
-      console.error(`Response:`, error.response.data);
-    }
-    return false;
+    return { success: false, error: error.message };
   }
 };
 
-// Send WhatsApp via Pinbot API (Not Meta/Facebook)
-const sendWhatsApp = async (phoneNumber, otp, name = 'User') => {
+// Send SMS OTP - Called by smsController
+const sendSMSOTP = async (phoneNumber, name = 'User') => {
   const cleanPhone = phoneNumber.replace(/\D/g, '');
-  const message = `🔐 OTP Verification\n\nDear ${name},\n\nYour OTP is: ${otp}\n\nValid for 10 minutes\n\n- Rich Solutions`;
+  const otp = generateSMSOTP();
+  const expiresAt = Date.now() + 10 * 60 * 1000;
+  
+  // Store OTP in memory for verification
+  smsOtpStore.set(cleanPhone, {
+    otp: otp,
+    expiresAt: expiresAt,
+    attempts: 0,
+    name: name
+  });
+  
+  const message = `Dear ${name} Your OTP is: ${otp}. Rich Solutions`;
   
   console.log(`=========================================`);
-  console.log(`📤 Sending WhatsApp via Pinbot to: ${cleanPhone}`);
-  console.log(`🔑 OTP: ${otp}`);
-  console.log(`💬 Message: ${message}`);
+  console.log(`📱 SMS OTP: ${otp} for ${cleanPhone}`);
   console.log(`=========================================`);
   
-  // Get Pinbot credentials from .env
-  const pinbotApiKey = process.env.PINBOT_API_KEY;
-  const pinbotPhoneNumberId = process.env.PINBOT_PHONE_NUMBER_ID;
-  const pinbotApiUrl = process.env.PINBOT_API_URL || 'https://partnersv1.pinbot.ai/v3';
+  const result = await sendSMS(cleanPhone, message);
   
-  if (!pinbotApiKey) {
-    console.log(`❌ PINBOT_API_KEY not found in .env file`);
-    console.log(`💡 Please add PINBOT_API_KEY to your .env file`);
-    return false;
-  }
-  
-  if (!pinbotPhoneNumberId) {
-    console.log(`❌ PINBOT_PHONE_NUMBER_ID not found in .env file`);
-    console.log(`💡 Please add PINBOT_PHONE_NUMBER_ID to your .env file`);
-    return false;
-  }
-  
-  try {
-    // Pinbot API endpoint (NOT Facebook/Meta)
-    const url = `${pinbotApiUrl}/${pinbotPhoneNumberId}/messages`;
-    
-    const requestBody = {
-      messaging_product: "whatsapp",
-      recipient_type: "individual",
-      to: cleanPhone,
-      type: "text",
-      text: { body: message }
-    };
-    
-    console.log(`📨 Pinbot URL: ${url}`);
-    console.log(`📨 Sending to Pinbot...`);
-    
-    const response = await axios.post(url, requestBody, {
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': pinbotApiKey  // Pinbot uses 'apikey' header, not 'Authorization'
-      },
-      timeout: 15000
-    });
-    
-    console.log(`📨 Pinbot Response Status: ${response.status}`);
-    console.log(`📨 Pinbot Response Data:`, response.data);
-    
-    if (response.status === 200 || response.status === 201) {
-      console.log(`✅ WhatsApp OTP sent successfully via Pinbot to ${cleanPhone}!`);
-      return true;
-    }
-    
-    return false;
-  } catch (error) {
-    console.error(`❌ WhatsApp/Pinbot error:`);
-    console.error(`   Message: ${error.message}`);
-    if (error.response) {
-      console.error(`   Status: ${error.response.status}`);
-      console.error(`   Data:`, error.response.data);
-    }
-    return false;
-  }
+  return {
+    success: result.success,
+    otp: otp,
+    messageId: result.messageId
+  };
 };
 
-module.exports = { generateOTP, sendSMS, sendWhatsApp };
+// Verify SMS OTP - Called by smsController
+const verifySMSOTP = (phoneNumber, userOtp) => {
+  const cleanPhone = phoneNumber.replace(/\D/g, '');
+  const record = smsOtpStore.get(cleanPhone);
+  
+  console.log(`🔐 Verifying SMS OTP for ${cleanPhone}`);
+  console.log(`   Expected: ${record?.otp}`);
+  console.log(`   Received: ${userOtp}`);
+  
+  if (!record) {
+    return { success: false, message: 'No OTP found. Please request a new one.' };
+  }
+  
+  if (Date.now() > record.expiresAt) {
+    smsOtpStore.delete(cleanPhone);
+    return { success: false, message: 'OTP has expired. Please request a new one.' };
+  }
+  
+  if (record.attempts >= 3) {
+    smsOtpStore.delete(cleanPhone);
+    return { success: false, message: 'Too many failed attempts. Please request a new OTP.' };
+  }
+  
+  if (record.otp !== userOtp) {
+    record.attempts++;
+    smsOtpStore.set(cleanPhone, record);
+    return { success: false, message: `Invalid OTP. ${3 - record.attempts} attempts remaining.` };
+  }
+  
+  smsOtpStore.delete(cleanPhone);
+  console.log(`✅ SMS OTP verified successfully!`);
+  return { success: true, message: 'OTP verified successfully', name: record.name };
+};
+
+module.exports = { generateSMSOTP, sendSMSOTP, verifySMSOTP };

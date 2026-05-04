@@ -16,9 +16,14 @@ const sendSmsOtp = async (req, res) => {
     const cleanPhone = phone.replace(/\D/g, '');
     const result = await sendSMSOTP(cleanPhone, name || 'User');
     
-    let user = await User.findByPhone(cleanPhone);
+    // FIX: Use Sequelize's findOne instead of findByPhone
+    let user = await User.findOne({ where: { phone_number: cleanPhone } });
     if (!user) {
-      user = await User.create({ phone_number: cleanPhone, name: name || null });
+      user = await User.create({ 
+        phone_number: cleanPhone, 
+        name: name || null,
+        role: 'user'
+      });
     }
     
     await OTP.create({
@@ -45,17 +50,31 @@ const verifySmsOtp = async (req, res) => {
     const verification = verifySMSOTP(cleanPhone, otp);
     if (!verification.success) return res.status(401).json({ error: verification.message });
     
-    let user = await User.findByPhone(cleanPhone);
+    // FIX: Use Sequelize's findOne instead of findByPhone
+    let user = await User.findOne({ where: { phone_number: cleanPhone } });
     if (!user) {
-      user = await User.create({ phone_number: cleanPhone, name: name || 'User' });
+      user = await User.create({ 
+        phone_number: cleanPhone, 
+        name: name || 'User',
+        role: 'user'
+      });
     } else if (name) {
-      await User.update(user.id, { name });
+      await user.update({ name });
     }
     
-    await User.update(user.id, { last_login: new Date().toISOString() });
+    await user.update({ last_login: new Date() });
     
     const token = generateToken(user.id, user.phone_number);
-    res.json({ success: true, message: 'SMS OTP verified', token, user: { id: user.id, name: user.name, phoneNumber: user.phone_number } });
+    res.json({ 
+      success: true, 
+      message: 'SMS OTP verified', 
+      token, 
+      user: { 
+        id: user.id, 
+        name: user.name, 
+        phoneNumber: user.phone_number 
+      } 
+    });
   } catch (error) {
     console.error('Verify SMS OTP error:', error);
     res.status(500).json({ error: 'Failed to verify SMS OTP' });
