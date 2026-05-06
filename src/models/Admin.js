@@ -1,80 +1,73 @@
-const { getOne, getAll, run } = require('../config/database');
-const crypto = require('crypto');
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/database');
 const bcrypt = require('bcryptjs');
 
-const Admin = {
-  findByEmail: async (email) => {
-    return await getOne('SELECT * FROM admins WHERE email = ?', [email]);
+const Admin = sequelize.define('Admin', {
+  id: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true,
   },
-
-  findById: async (id) => {
-    return await getOne('SELECT id, name, email, phone, is_active, created_by, last_login, created_at FROM admins WHERE id = ?', [id]);
+  name: {
+    type: DataTypes.STRING,
+    allowNull: false,
   },
-
-  findByPhone: async (phone) => {
-    return await getOne('SELECT * FROM admins WHERE phone = ?', [phone]);
+  email: {
+    type: DataTypes.STRING,
+    unique: true,
+    allowNull: false,
+    validate: {
+      isEmail: true,
+    },
   },
-
-  create: async (data) => {
-    const id = crypto.randomUUID();
-    const hashedPassword = await bcrypt.hash(data.password, 10);
-    await run(
-      `INSERT INTO admins (id, name, email, password, phone, created_by) VALUES (?, ?, ?, ?, ?, ?)`,
-      [id, data.name, data.email, hashedPassword, data.phone, data.created_by]
-    );
-    return await Admin.findById(id);
+  password: {
+    type: DataTypes.STRING,
+    allowNull: false,
   },
-
-  update: async (id, data) => {
-    const fields = [];
-    const values = [];
-    
-    if (data.name !== undefined) {
-      fields.push('name = ?');
-      values.push(data.name);
-    }
-    if (data.phone !== undefined) {
-      fields.push('phone = ?');
-      values.push(data.phone);
-    }
-    if (data.is_active !== undefined) {
-      fields.push('is_active = ?');
-      values.push(data.is_active);
-    }
-    if (data.password) {
-      const hashedPassword = await bcrypt.hash(data.password, 10);
-      fields.push('password = ?');
-      values.push(hashedPassword);
-    }
-    if (data.last_login !== undefined) {
-      fields.push('last_login = ?');
-      values.push(data.last_login);
-    }
-    
-    if (fields.length === 0) return null;
-    
-    values.push(id);
-    fields.push('updated_at = CURRENT_TIMESTAMP');
-    
-    await run(`UPDATE admins SET ${fields.join(', ')} WHERE id = ?`, values);
-    return await Admin.findById(id);
+  phone: {
+    type: DataTypes.STRING(20),
+    allowNull: true,
   },
-
-  delete: async (id) => {
-    await run('DELETE FROM admins WHERE id = ?', [id]);
-    return true;
+  role: {
+    type: DataTypes.STRING,
+    defaultValue: 'admin',
+    allowNull: false,
   },
-
-  getAll: async () => {
-    return await getAll('SELECT id, name, email, phone, is_active, created_by, created_at FROM admins');
+  is_active: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true,
   },
-
-  getByCreator: async (creatorId) => {
-    return await getAll('SELECT id, name, email, phone, is_active, created_at FROM admins WHERE created_by = ?', [creatorId]);
+  created_by: {
+    type: DataTypes.UUID,
+    allowNull: true,
   },
+  last_login: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+}, {
+  timestamps: true,
+  tableName: 'admins',
+});
 
-  verifyPassword: async (admin, password) => {
-    return await bcrypt.compare(password, admin.password);
+// Instance method for password validation
+Admin.prototype.validatePassword = async function(password) {
+  if (!this.password) return false;
+  return await bcrypt.compare(password, this.password);
+};
+
+// Hooks for password hashing
+Admin.beforeCreate = async (admin) => {
+  if (admin.password) {
+    const salt = await bcrypt.genSalt(10);
+    admin.password = await bcrypt.hash(admin.password, salt);
+  }
+};
+
+Admin.beforeUpdate = async (admin) => {
+  if (admin.changed('password')) {
+    const salt = await bcrypt.genSalt(10);
+    admin.password = await bcrypt.hash(admin.password, salt);
   }
 };
 

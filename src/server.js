@@ -1,57 +1,68 @@
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 require('dotenv').config();
 const { connectDB } = require('./config/database');
 const authRoutes = require('./routes/authRoutes');
 const whatsappRoutes = require('./routes/whatsappRoutes');
-const bcrypt = require('bcryptjs');
-const { v4: uuidv4 } = require('uuid');
+const emailRoutes = require('./routes/emailRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors({ origin: ['http://localhost:5173'], credentials: true }));
+// Middleware
+app.use(cors({
+  origin: ['http://localhost:5173', 'http://localhost:3000'],
+  credentials: true
+}));
+app.use(cookieParser());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
+app.use('/api/email', emailRoutes);
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Server is running' });
+// Test route
+app.get('/api/test', (req, res) => {
+  res.json({ message: 'API is working', timestamp: new Date() });
 });
 
-// Test endpoint
-app.get('/test', (req, res) => {
-  res.json({ message: 'Backend is working!' });
+// 404 handler - Simple version without wildcard
+app.use((req, res) => {
+  res.status(404).json({ 
+    error: 'Route not found',
+    method: req.method,
+    path: req.originalUrl
+  });
+});
+
+// Error handler
+app.use((err, req, res, next) => {
+  console.error('Server error:', err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 const startServer = async () => {
-  await connectDB();
-  
-  const { User } = require('./models');
-  const adminExists = await User.findOne({ where: { email: 'admin@otpless.com' } });
-  if (!adminExists) {
-    const hashedPassword = await bcrypt.hash('Admin@123', 10);
-    await User.create({
-      id: uuidv4(),
-      name: 'Admin User',
-      email: 'admin@otpless.com',
-      phone_number: '0000000000',
-      password: hashedPassword,
-      role: 'admin'
+  try {
+    await connectDB();
+    
+    app.listen(PORT, () => {
+      console.log(`\n=========================================`);
+      console.log(`🚀 Server running on http://localhost:${PORT}`);
+      console.log(`=========================================`);
+      console.log(`📱 SMS OTP:    POST /api/auth/send-otp`);
+      console.log(`💚 WhatsApp:   POST /api/whatsapp/send`);
+      console.log(`📧 Email:      POST /api/email/send`);
+      console.log(`👨‍💼 Admin:     POST /api/auth/admin-login`);
+      console.log(`👥 Admin Users: GET /api/auth/admin/users`);
+      console.log(`=========================================\n`);
     });
-    console.log('✅ Admin created: admin@otpless.com / Admin@123');
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
   }
-  
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    // console.log(`✅ Health check: http://localhost:${PORT}/health`);
-    // console.log(`✅ Test: http://localhost:${PORT}/test`);
-    // console.log(`✅ Admin login: POST http://localhost:${PORT}/api/auth/admin-login`);
-    // console.log(`✅ WhatsApp send: POST http://localhost:${PORT}/api/whatsapp/send`);
-  });
 };
 
 startServer();

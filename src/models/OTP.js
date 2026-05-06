@@ -9,8 +9,11 @@ const OTP = sequelize.define('OTP', {
   },
   phone_number: {
     type: DataTypes.STRING(20),
-    allowNull: false,
-    field: 'phone_number',
+    allowNull: true,
+  },
+  email: {  // ✅ ADD THIS FIELD
+    type: DataTypes.STRING,
+    allowNull: true,
   },
   otp_code: {
     type: DataTypes.STRING(6),
@@ -27,6 +30,10 @@ const OTP = sequelize.define('OTP', {
   user_id: {
     type: DataTypes.UUID,
     allowNull: true,
+  },
+  delivery_method: {
+    type: DataTypes.STRING,
+    defaultValue: 'sms',
   },
 }, {
   timestamps: true,

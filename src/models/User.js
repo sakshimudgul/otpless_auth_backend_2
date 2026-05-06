@@ -1,7 +1,6 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 const bcrypt = require('bcryptjs');
-const crypto = require('crypto');
 
 const User = sequelize.define('User', {
   id: {
@@ -21,15 +20,16 @@ const User = sequelize.define('User', {
   phone_number: {
     type: DataTypes.STRING(20),
     unique: true,
-    allowNull: false,
+    allowNull: true,  // Change to allow null for email-only users
   },
   password: {
     type: DataTypes.STRING,
     allowNull: true,
   },
   role: {
-    type: DataTypes.ENUM('admin', 'user'),
+    type: DataTypes.STRING,
     defaultValue: 'user',
+    allowNull: false,
   },
   is_active: {
     type: DataTypes.BOOLEAN,
@@ -38,6 +38,11 @@ const User = sequelize.define('User', {
   created_by: {
     type: DataTypes.UUID,
     allowNull: true,
+    // Remove the references to fix foreign key constraint
+    // references: {
+    //   model: 'admins',
+    //   key: 'id'
+    // }
   },
   last_login: {
     type: DataTypes.DATE,
@@ -45,47 +50,25 @@ const User = sequelize.define('User', {
   },
 }, {
   timestamps: true,
+  tableName: 'users',
 });
 
-// ADD THIS METHOD - Find user by phone number
-User.findByPhone = async function(phone) {
-  const cleanPhone = phone.replace(/\D/g, '');
-  return await this.findOne({ where: { phone_number: cleanPhone } });
-};
-
-// ADD THIS METHOD - Find user by ID
-User.findById = async function(id) {
-  return await this.findByPk(id);
-};
-
-// ADD THIS METHOD - Update user
-User.updateUser = async function(id, data) {
-  const user = await this.findByPk(id);
-  if (!user) return null;
-  
-  if (data.name) user.name = data.name;
-  if (data.last_login) user.last_login = data.last_login;
-  
-  await user.save();
-  return user;
-};
-
-// Instance method for password validation
 User.prototype.validatePassword = async function(password) {
   if (!this.password) return false;
   return await bcrypt.compare(password, this.password);
 };
 
-// Hash password before save
 User.beforeCreate = async (user) => {
   if (user.password) {
-    user.password = await bcrypt.hash(user.password, 10);
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(user.password, salt);
   }
 };
 
 User.beforeUpdate = async (user) => {
   if (user.changed('password')) {
-    user.password = await bcrypt.hash(user.password, 10);
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(user.password, salt);
   }
 };
 

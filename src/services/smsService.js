@@ -1,82 +1,78 @@
+// src/services/smsService.js
 const axios = require('axios');
 require('dotenv').config();
 
-// In-memory OTP storage (for verification)
-const smsOtpStore = new Map();
-
+// Generate random OTP
 const generateSMSOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Send SMS via SMSJust API
-const sendSMS = async (phoneNumber, message) => {
+// Send SMS using SMSJust API with Template
+const sendSMS = async (phoneNumber, otp, name = 'User') => {
   const cleanPhone = phoneNumber.replace(/\D/g, '');
   
+  // IMPORTANT: Replace the placeholders in the template with actual values
+  // Your template "Dear {#var#} Your OTP is : {#var#}." expects two variables.
+  // The API parameter "message" should contain the final text.
+  const finalMessage = `Dear ${name} Your OTP is : ${otp}. Rich Solutions`;
+
+  console.log(`📤 Sending SMS to ${cleanPhone}`);
+  console.log(`📝 Final Message: ${finalMessage}`);
+
+  // Build the URL as per your API key format
+  // Using your provided structure: ?username=...&pass=...&senderid=...&dest_mobileno=...&msgtype=TXT&message=...&response=Y
+  const url = `${process.env.SMS_API_URL}?username=${process.env.SMS_USERNAME}&pass=${process.env.SMS_PASSWORD}&senderid=${process.env.SMS_SENDER_ID}&dest_mobileno=${cleanPhone}&msgtype=TXT&message=${encodeURIComponent(finalMessage)}&response=Y`;
+
   try {
-    const params = new URLSearchParams({
-      username: process.env.SMS_USERNAME,
-      pass: process.env.SMS_PASSWORD,
-      senderid: process.env.SMS_SENDER_ID,
-      dest_mobileno: cleanPhone,
-      msgtype: 'TXT',
-      message: message,
-      response: 'Y'
-    });
-    
-    const url = `${process.env.SMS_API_URL}?${params.toString()}`;
-    const response = await axios.get(url, { timeout: 15000 });
+    const response = await axios.get(url, { timeout: 30000 });
     const result = response.data;
-    
     console.log(`📨 SMS Response: ${result}`);
-    
-    if (result && result.match(/\d+-\d{4}_\d{2}_\d{2}/)) {
+
+    // Check for success indicators (Message ID or DELIVERED status)
+    if (result && (result.includes('-') || result.toLowerCase().includes('delivrd'))) {
+      console.log(`✅ SMS sent successfully! Message ID: ${result}`);
       return { success: true, messageId: result };
+    } else {
+      console.log(`⚠️ SMS sending failed. Response: ${result}`);
+      return { success: false, error: result };
     }
-    
-    return { success: true };
   } catch (error) {
-    console.error(`❌ SMS error:`, error.message);
+    console.error(`❌ SMS API Error:`, error.message);
     return { success: false, error: error.message };
   }
 };
 
-// Send SMS OTP - Called by smsController
+// Send SMS OTP (Main function called by controller)
 const sendSMSOTP = async (phoneNumber, name = 'User') => {
   const cleanPhone = phoneNumber.replace(/\D/g, '');
   const otp = generateSMSOTP();
-  const expiresAt = Date.now() + 10 * 60 * 1000;
-  
-  // Store OTP in memory for verification
-  smsOtpStore.set(cleanPhone, {
-    otp: otp,
-    expiresAt: expiresAt,
-    attempts: 0,
-    name: name
-  });
-  
-  const message = `Dear ${name} Your OTP is: ${otp}. Rich Solutions`;
   
   console.log(`=========================================`);
-  console.log(`📱 SMS OTP: ${otp} for ${cleanPhone}`);
+  console.log(`📱 Sending SMS OTP to ${cleanPhone}`);
+  console.log(`🔑 OTP: ${otp}`);
+  console.log(`👤 Name: ${name}`);
   console.log(`=========================================`);
   
-  const result = await sendSMS(cleanPhone, message);
+  // Call the function that uses your template
+  const result = await sendSMS(cleanPhone, otp, name);
   
+  // IMPORTANT: Return the OTP along with the result so it can be saved to the database
   return {
     success: result.success,
     otp: otp,
-    messageId: result.messageId
+    messageId: result.messageId,
+    error: result.error
   };
 };
 
-// Verify SMS OTP - Called by smsController
+// In-memory store for verification (if you're using it, otherwise rely on DB)
+const smsOtpStore = new Map();
+
 const verifySMSOTP = (phoneNumber, userOtp) => {
   const cleanPhone = phoneNumber.replace(/\D/g, '');
+  // Note: It's better to verify from your database (OTP model) than from memory.
+  // This is a fallback.
   const record = smsOtpStore.get(cleanPhone);
-  
-  console.log(`🔐 Verifying SMS OTP for ${cleanPhone}`);
-  console.log(`   Expected: ${record?.otp}`);
-  console.log(`   Received: ${userOtp}`);
   
   if (!record) {
     return { success: false, message: 'No OTP found. Please request a new one.' };
@@ -84,23 +80,15 @@ const verifySMSOTP = (phoneNumber, userOtp) => {
   
   if (Date.now() > record.expiresAt) {
     smsOtpStore.delete(cleanPhone);
-    return { success: false, message: 'OTP has expired. Please request a new one.' };
-  }
-  
-  if (record.attempts >= 3) {
-    smsOtpStore.delete(cleanPhone);
-    return { success: false, message: 'Too many failed attempts. Please request a new OTP.' };
+    return { success: false, message: 'OTP has expired.' };
   }
   
   if (record.otp !== userOtp) {
-    record.attempts++;
-    smsOtpStore.set(cleanPhone, record);
-    return { success: false, message: `Invalid OTP. ${3 - record.attempts} attempts remaining.` };
+    return { success: false, message: 'Invalid OTP.' };
   }
   
   smsOtpStore.delete(cleanPhone);
-  console.log(`✅ SMS OTP verified successfully!`);
-  return { success: true, message: 'OTP verified successfully', name: record.name };
+  return { success: true, message: 'OTP verified' };
 };
 
 module.exports = { generateSMSOTP, sendSMSOTP, verifySMSOTP };

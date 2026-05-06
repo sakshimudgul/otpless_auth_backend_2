@@ -9,7 +9,12 @@ const generateToken = (userId, role) => {
   return jwt.sign({ userId, role }, JWT_SECRET, { expiresIn: '7d' });
 };
 
-// Send WhatsApp message using Pinbot API with your exact format
+// Generate 6-digit OTP
+const generateOTP = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+};
+
+// Send WhatsApp message using Pinbot API
 const sendWhatsAppMessage = async (phoneNumber, otp, name = 'User') => {
   const cleanPhone = phoneNumber.replace(/\D/g, '');
   
@@ -21,18 +26,18 @@ const sendWhatsAppMessage = async (phoneNumber, otp, name = 'User') => {
   const pinbotApiUrl = process.env.PINBOT_API_URL || 'https://partnersv1.pinbot.ai/v3';
   
   if (!pinbotApiKey) {
-    console.log(`❌ PINBOT_API_KEY not found`);
+    console.log(`❌ PINBOT_API_KEY not found in .env`);
     return false;
   }
   
   try {
-    // Using the exact format from your curl
     const url = `${pinbotApiUrl}/${pinbotPhoneNumberId}/messages`;
     
+    // Using template format as per your curl command
     const requestBody = {
       messaging_product: "whatsapp",
       recipient_type: "individual",
-      to: parseInt(cleanPhone), // Send as number, not string
+      to: parseInt(cleanPhone),
       type: "template",
       template: {
         name: "auth_template_001",
@@ -64,7 +69,7 @@ const sendWhatsAppMessage = async (phoneNumber, otp, name = 'User') => {
       }
     };
     
-    console.log(`📨 Sending to Pinbot: ${url}`);
+    console.log(`📨 Sending to Pinbot API...`);
     console.log(`📨 Request Body:`, JSON.stringify(requestBody, null, 2));
     
     const response = await axios.post(url, requestBody, {
@@ -75,21 +80,67 @@ const sendWhatsAppMessage = async (phoneNumber, otp, name = 'User') => {
       timeout: 30000
     });
     
-    console.log(`📨 Pinbot Response Status: ${response.status}`);
-    console.log(`📨 Pinbot Response Data:`, response.data);
+    console.log(`📨 Response Status: ${response.status}`);
+    console.log(`📨 Response Data:`, response.data);
     
     if (response.status === 200 || response.status === 201) {
-      console.log(`✅ WhatsApp sent successfully via Pinbot!`);
+      console.log(`✅ WhatsApp message sent successfully!`);
       return true;
     }
     
     return false;
+    
   } catch (error) {
-    console.error(`❌ WhatsApp error:`, error.message);
+    console.error(`❌ WhatsApp API Error:`);
+    console.error(`   Message: ${error.message}`);
     if (error.response) {
       console.error(`   Status: ${error.response.status}`);
       console.error(`   Data:`, JSON.stringify(error.response.data, null, 2));
     }
+    return false;
+  }
+};
+
+// Alternative: Send text message (if template doesn't work)
+const sendWhatsAppTextMessage = async (phoneNumber, otp, name = 'User') => {
+  const cleanPhone = phoneNumber.replace(/\D/g, '');
+  
+  const pinbotApiKey = process.env.PINBOT_API_KEY;
+  const pinbotPhoneNumberId = process.env.PINBOT_PHONE_NUMBER_ID;
+  const pinbotApiUrl = process.env.PINBOT_API_URL || 'https://partnersv1.pinbot.ai/v3';
+  
+  try {
+    const url = `${pinbotApiUrl}/${pinbotPhoneNumberId}/messages`;
+    
+    const requestBody = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: cleanPhone,
+      type: "text",
+      text: {
+        body: `🔐 *Your OTP Code*\n\nHello ${name},\n\nYour One-Time Password (OTP) is: *${otp}*\n\nThis code is valid for 10 minutes.\n\nDo not share this code with anyone.\n\n- OTPless Auth`
+      }
+    };
+    
+    console.log(`📨 Sending WhatsApp text message...`);
+    
+    const response = await axios.post(url, requestBody, {
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': pinbotApiKey
+      },
+      timeout: 30000
+    });
+    
+    if (response.status === 200 || response.status === 201) {
+      console.log(`✅ WhatsApp text message sent!`);
+      return true;
+    }
+    
+    return false;
+    
+  } catch (error) {
+    console.error(`❌ WhatsApp text message error:`, error.message);
     return false;
   }
 };
@@ -104,8 +155,14 @@ const sendWhatsAppOtp = async (req, res) => {
     }
     
     const cleanPhone = phone.replace(/\D/g, '');
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = generateOTP();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    
+    console.log(`\n=========================================`);
+    console.log(`💚 WhatsApp OTP Request`);
+    console.log(`   Phone: ${cleanPhone}`);
+    console.log(`   OTP: ${otp}`);
+    console.log(`=========================================\n`);
     
     // Find or create user
     let user = await User.findOne({ where: { phone_number: cleanPhone } });
@@ -116,36 +173,50 @@ const sendWhatsAppOtp = async (req, res) => {
         role: 'user'
       });
       console.log('✅ New user created:', user.id);
-    } else {
-      console.log('✅ Existing user found:', user.id);
     }
     
-    // Send WhatsApp message using template
-    const whatsappSent = await sendWhatsAppMessage(cleanPhone, otp, name || user.name || 'User');
+    // Delete old unverified OTPs
+    await OTP.destroy({
+      where: {
+        phone_number: cleanPhone,
+        is_verified: false,
+        delivery_method: 'whatsapp'
+      }
+    });
     
     // Save OTP to database
-    const otpRecord = await OTP.create({
+    await OTP.create({
       phone_number: cleanPhone,
       otp_code: otp,
       expires_at: expiresAt,
       user_id: user.id,
-      delivery_method: 'whatsapp'
+      delivery_method: 'whatsapp',
+      is_verified: false
     });
     
-    console.log(`=========================================`);
-    console.log(`📱 WhatsApp OTP: ${otp} for ${cleanPhone}`);
-    console.log(`📝 OTP ID: ${otpRecord.id}`);
-    console.log(`📨 WhatsApp Sent: ${whatsappSent ? '✅ Yes' : '❌ No'}`);
-    console.log(`=========================================`);
+    // Try to send WhatsApp message using template first
+    let whatsappSent = await sendWhatsAppMessage(cleanPhone, otp, name || user.name);
+    
+    // If template fails, try text message
+    if (!whatsappSent) {
+      console.log(`⚠️ Template failed, trying text message...`);
+      whatsappSent = await sendWhatsAppTextMessage(cleanPhone, otp, name || user.name);
+    }
+    
+    console.log(`\n=========================================`);
+    console.log(`📱 WhatsApp OTP: ${otp}`);
+    console.log(`📨 WhatsApp Sent: ${whatsappSent ? '✅ YES' : '❌ NO'}`);
+    console.log(`=========================================\n`);
     
     res.json({
       success: true,
-      message: whatsappSent ? 'WhatsApp OTP sent successfully' : 'WhatsApp OTP generated (sending may have failed)',
+      message: whatsappSent ? 'WhatsApp OTP sent to your mobile!' : 'WhatsApp OTP generated (check console for OTP)',
       demoOtp: otp
     });
+    
   } catch (error) {
-    console.error('Send WhatsApp OTP error:', error);
-    res.status(500).json({ error: 'Failed to send WhatsApp OTP' });
+    console.error('❌ Send WhatsApp OTP error:', error);
+    res.status(500).json({ error: 'Failed to send WhatsApp OTP: ' + error.message });
   }
 };
 
@@ -173,13 +244,8 @@ const verifyWhatsAppOtp = async (req, res) => {
       return res.status(401).json({ error: 'Invalid or expired OTP' });
     }
     
-    // Mark as verified
-    await otpRecord.update({
-      is_verified: true,
-      verified_at: new Date()
-    });
+    await otpRecord.update({ is_verified: true });
     
-    // Get user
     let user = await User.findOne({ where: { phone_number: cleanPhone } });
     if (!user) {
       user = await User.create({
@@ -191,7 +257,6 @@ const verifyWhatsAppOtp = async (req, res) => {
       await user.update({ name });
     }
     
-    // Update last login
     await user.update({ last_login: new Date() });
     
     const token = generateToken(user.id, user.role);
