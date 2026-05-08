@@ -215,12 +215,13 @@ const refreshToken = async (req, res) => {
 
 // ==================== LOGOUT ====================
 const logout = async (req, res) => {
+  // No authentication needed - just return success
+  // The frontend will clear the token
   res.json({
     success: true,
     message: 'Logged out successfully'
   });
 };
-
 // ==================== GET CURRENT USER ====================
 const getMe = async (req, res) => {
   try {

@@ -1,25 +1,31 @@
 const express = require('express');
-const router = express.Router();
-
-// Import controllers
-const authController = require('../controllers/authController');
-const adminController = require('../controllers/adminController');
+const { 
+  adminLogin, 
+  sendUserOtp, 
+  verifyUserOtp, 
+  refreshToken, 
+  logout, 
+  getMe 
+} = require('../controllers/authController');
+const { getAllUsers, createUser, deleteUser } = require('../controllers/adminController');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 
-// Public routes
-router.post('/admin-login', authController.adminLogin);
-router.post('/send-otp', authController.sendUserOtp);
-router.post('/verify-otp', authController.verifyUserOtp);
-router.post('/refresh', authController.refreshToken);
+const router = express.Router();
 
-// Protected routes
-router.post('/logout', protect, authController.logout);
-router.get('/me', protect, authController.getMe);
+// ============ PUBLIC ROUTES (No authentication required) ============
+router.post('/admin-login', adminLogin);
+router.post('/send-otp', sendUserOtp);
+router.post('/verify-otp', verifyUserOtp);
+router.post('/refresh', refreshToken);
+router.post('/logout', logout);  // ← PUBLIC route
 
-// Admin only routes
-router.get('/admin/users', protect, adminOnly, adminController.getAllUsers);
-router.post('/admin/users', protect, adminOnly, adminController.createUser);
-router.delete('/admin/users/:id', protect, adminOnly, adminController.deleteUser);
+// ============ PROTECTED ROUTES (Authentication required) ============
+router.get('/me', protect, getMe);
+
+// ============ ADMIN ONLY ROUTES ============
+router.get('/admin/users', protect, adminOnly, getAllUsers);
+router.post('/admin/users', protect, adminOnly, createUser);
+router.delete('/admin/users/:id', protect, adminOnly, deleteUser);
 
 // Test route
 router.get('/test', (req, res) => {

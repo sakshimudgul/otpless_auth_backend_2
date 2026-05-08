@@ -1,100 +1,101 @@
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
-// Create transporter with RichSol settings
-const createTransporter = () => {
-  // Try different common ports for Indian hosting providers
-  const port = parseInt(process.env.EMAIL_PORT) || 587;
-  const secure = process.env.EMAIL_SECURE === 'true' || port === 465;
-  
-  return nodemailer.createTransport({
-    host: process.env.EMAIL_HOST,
-    port: port,
-    secure: secure,
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-    tls: {
-      rejectUnauthorized: false, // Important for some hosting providers
-    },
-    connectionTimeout: 10000,
-  });
-};
-
 const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Send OTP via Email using RichSol
-const sendEmailOTP = async (email, otp, name = 'User') => {
-  console.log(`📧 Attempting to send OTP to ${email} via RichSol...`);
+// Try multiple SMTP configurations
+const getTransporter = async () => {
+  const configs = [
+    { host: 'mail.richsol.com', port: 587, secure: false },
+    { host: 'mail.richsol.com', port: 25, secure: false },
+    { host: 'smtp.richsol.com', port: 587, secure: false },
+    { host: 'richsol.com', port: 587, secure: false },
+    { host: 'localhost', port: 25, secure: false }, // If email is on same server
+  ];
   
-  const templateId = process.env.EMAIL_TEMPLATE_ID;
-  const templateName = process.env.EMAIL_TEMPLATE_NAME;
+  for (const config of configs) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host: config.host,
+        port: config.port,
+        secure: config.secure,
+        auth: {
+          user: 'developer.intern@richsol.com',
+          pass: 'Intel@2026',
+        },
+        tls: { rejectUnauthorized: false },
+        connectionTimeout: 5000,
+      });
+      
+      await transporter.verify();
+      console.log(`✅ Found working SMTP: ${config.host}:${config.port}`);
+      return transporter;
+    } catch (error) {
+      console.log(`❌ Failed ${config.host}:${config.port}`);
+    }
+  }
+  return null;
+};
+
+// Send OTP via SMTP
+const sendEmailOTP = async (email, otpCode, name = 'User') => {
+  console.log(`📧 Sending email OTP to ${email}...`);
+  
+  const transporter = await getTransporter();
+  
+  if (!transporter) {
+    console.log(`❌ No working SMTP configuration found`);
+    return false;
+  }
   
   const htmlContent = `
     <!DOCTYPE html>
     <html>
     <head>
-      <meta charset="UTF-8">
       <style>
-        body { font-family: Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 0; }
-        .container { max-width: 500px; margin: 50px auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); overflow: hidden; }
-        .header { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 30px; text-align: center; }
-        .header h1 { margin: 0; font-size: 24px; }
-        .content { padding: 30px; text-align: center; }
-        .otp-code { font-size: 36px; font-weight: bold; color: #667eea; letter-spacing: 5px; margin: 20px 0; padding: 15px; background: #f0f0f0; border-radius: 8px; font-family: monospace; }
-        .footer { background: #f8f9fa; padding: 15px; text-align: center; font-size: 12px; color: #666; }
-        .template-id { font-size: 11px; color: #999; margin-top: 10px; }
+        .container { font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; }
+        .header { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 20px; text-align: center; }
+        .otp { font-size: 32px; font-weight: bold; color: #667eea; padding: 20px; text-align: center; letter-spacing: 5px; }
+        .content { padding: 20px; text-align: center; }
+        .footer { font-size: 12px; color: #999; text-align: center; padding: 20px; }
       </style>
     </head>
     <body>
       <div class="container">
         <div class="header">
           <h1>🔐 OTP Verification</h1>
-          <p>Template: ${templateName} (ID: ${templateId})</p>
         </div>
         <div class="content">
           <h2>Hello ${name},</h2>
-          <p>Your One-Time Password (OTP) for verification is:</p>
-          <div class="otp-code">${otp}</div>
+          <p>Your One-Time Password (OTP) is:</p>
+          <div class="otp">${otpCode}</div>
           <p>This OTP is valid for <strong>10 minutes</strong>.</p>
-          <p>For security reasons, do not share this OTP with anyone.</p>
+          <p>Do not share this code with anyone.</p>
         </div>
         <div class="footer">
-          <p>This is an automated message. Please do not reply to this email.</p>
-          <p class="template-id">Template ID: ${templateId}</p>
-          <p>&copy; 2024 OTPless Auth. All rights reserved.</p>
+          <p>Rich System Solutions PVT LTD.</p>
         </div>
       </div>
+    </body>
     </html>
   `;
   
-  const transporter = createTransporter();
-  
   try {
-    // Verify connection
-    await transporter.verify();
-    console.log('📧 RichSol SMTP connection verified');
-    
     const info = await transporter.sendMail({
-      from: `"OTPless Auth" <${process.env.EMAIL_USER}>`,
+      from: '"Rich System Solutions PVT LTD." <developer.intern@richsol.com>',
       to: email,
-      subject: `Your OTP Code - ${templateName}`,
+      subject: 'Your OTP Code',
       html: htmlContent,
-      text: `Your OTP code is: ${otp}. Valid for 10 minutes.`,
+      text: `Your OTP code is: ${otpCode}. Valid for 10 minutes.`,
     });
     
-    console.log(`📧 Email sent successfully! Message ID: ${info.messageId}`);
+    console.log(`✅ Email sent! Message ID: ${info.messageId}`);
     return true;
+    
   } catch (error) {
-    console.error('❌ RichSol Email error:', error.message);
-    if (error.code === 'EAUTH') {
-      console.error('   Authentication failed. Check EMAIL_USER and EMAIL_PASS');
-    } else if (error.code === 'ESOCKET') {
-      console.error('   Connection failed. Check EMAIL_HOST and EMAIL_PORT');
-    }
+    console.error('❌ Email error:', error.message);
     return false;
   }
 };
