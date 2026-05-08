@@ -1,77 +1,109 @@
-// src/services/smsService.js
 const axios = require('axios');
 require('dotenv').config();
 
-// Generate random OTP
+// Generate 6-digit OTP
 const generateSMSOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Send SMS using SMSJust API with Template
+// Send SMS using SMSJust API - WORKING VERSION
 const sendSMS = async (phoneNumber, otp, name = 'User') => {
   const cleanPhone = phoneNumber.replace(/\D/g, '');
   
-  // IMPORTANT: Replace the placeholders in the template with actual values
-  // Your template "Dear {#var#} Your OTP is : {#var#}." expects two variables.
-  // The API parameter "message" should contain the final text.
-  const finalMessage = `Dear ${name} Your OTP is : ${otp}. Rich Solutions`;
-
-  console.log(`📤 Sending SMS to ${cleanPhone}`);
-  console.log(`📝 Final Message: ${finalMessage}`);
-
-  // Build the URL as per your API key format
-  // Using your provided structure: ?username=...&pass=...&senderid=...&dest_mobileno=...&msgtype=TXT&message=...&response=Y
-  const url = `${process.env.SMS_API_URL}?username=${process.env.SMS_USERNAME}&pass=${process.env.SMS_PASSWORD}&senderid=${process.env.SMS_SENDER_ID}&dest_mobileno=${cleanPhone}&msgtype=TXT&message=${encodeURIComponent(finalMessage)}&response=Y`;
-
+  // Your exact template
+  const message = `Dear ${name} Your OTP is : ${otp}. Rich Solutions`;
+  
+  // Encode message for URL
+  const encodedMessage = encodeURIComponent(message);
+  
+  // Build URL with proper parameters
+  const url = `https://www.smsjust.com/sms/user/urlsms.php?username=richcamp&pass=Intel@2025&senderid=RICHSL&dest_mobileno=${cleanPhone}&msgtype=TXT&message=${encodedMessage}&response=Y`;
+  
+  console.log(`\n╔══════════════════════════════════════════════════╗`);
+  console.log(`║           📱 SENDING SMS OTP                    ║`);
+  console.log(`╠══════════════════════════════════════════════════╣`);
+  console.log(`║ To:      ${cleanPhone}`);
+  console.log(`║ Name:    ${name}`);
+  console.log(`║ OTP:     ${otp}`);
+  console.log(`║ Message: ${message}`);
+  console.log(`╚══════════════════════════════════════════════════╝`);
+  
   try {
-    const response = await axios.get(url, { timeout: 30000 });
+    const response = await axios.get(url, {
+      timeout: 30000,
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded'
+      }
+    });
+    
     const result = response.data;
-    console.log(`📨 SMS Response: ${result}`);
-
-    // Check for success indicators (Message ID or DELIVERED status)
-    if (result && (result.includes('-') || result.toLowerCase().includes('delivrd'))) {
-      console.log(`✅ SMS sent successfully! Message ID: ${result}`);
-      return { success: true, messageId: result };
-    } else {
-      console.log(`⚠️ SMS sending failed. Response: ${result}`);
-      return { success: false, error: result };
+    console.log(`📨 Response: ${result}`);
+    
+    // Check for success (Message ID format: numbers-numbers)
+    if (result && /^\d+-\d{4}_\d{2}_\d{2}$/.test(result.trim())) {
+      console.log(`✅ SMS SENT SUCCESSFULLY!`);
+      console.log(`📨 Message ID: ${result}`);
+      return { 
+        success: true, 
+        messageId: result, 
+        otp: otp,
+        delivered: true 
+      };
     }
+    
+    // Check for error messages
+    if (result && result.toLowerCase().includes('balance')) {
+      console.log(`❌ ERROR: Insufficient balance`);
+      return { success: false, error: 'INSUFFICIENT_BALANCE', otp: otp };
+    }
+    
+    if (result && result.toLowerCase().includes('senderid')) {
+      console.log(`❌ ERROR: Sender ID not approved`);
+      return { success: false, error: 'SENDER_ID_NOT_APPROVED', otp: otp };
+    }
+    
+    // Unknown response
+    console.log(`⚠️ Unknown response: ${result}`);
+    return { success: false, error: result, otp: otp };
+    
   } catch (error) {
-    console.error(`❌ SMS API Error:`, error.message);
-    return { success: false, error: error.message };
+    console.error(`❌ NETWORK ERROR: ${error.message}`);
+    return { success: false, error: error.message, otp: otp };
   }
 };
 
-// Send SMS OTP (Main function called by controller)
+// Main function to send OTP
 const sendSMSOTP = async (phoneNumber, name = 'User') => {
   const cleanPhone = phoneNumber.replace(/\D/g, '');
+  
+  // Validate phone number
+  if (!cleanPhone || cleanPhone.length < 10) {
+    console.log(`❌ Invalid phone number: ${cleanPhone}`);
+    return { success: false, error: 'INVALID_PHONE', otp: null };
+  }
+  
   const otp = generateSMSOTP();
-  
-  console.log(`=========================================`);
-  console.log(`📱 Sending SMS OTP to ${cleanPhone}`);
-  console.log(`🔑 OTP: ${otp}`);
-  console.log(`👤 Name: ${name}`);
-  console.log(`=========================================`);
-  
-  // Call the function that uses your template
   const result = await sendSMS(cleanPhone, otp, name);
   
-  // IMPORTANT: Return the OTP along with the result so it can be saved to the database
-  return {
-    success: result.success,
-    otp: otp,
-    messageId: result.messageId,
-    error: result.error
-  };
+  // Store OTP for verification (in production, use database)
+  if (result.success) {
+    smsOtpStore.set(cleanPhone, {
+      otp: otp,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+      attempts: 0
+    });
+  }
+  
+  return result;
 };
 
-// In-memory store for verification (if you're using it, otherwise rely on DB)
+// In-memory store (use database in production)
 const smsOtpStore = new Map();
 
+// Verify OTP
 const verifySMSOTP = (phoneNumber, userOtp) => {
   const cleanPhone = phoneNumber.replace(/\D/g, '');
-  // Note: It's better to verify from your database (OTP model) than from memory.
-  // This is a fallback.
   const record = smsOtpStore.get(cleanPhone);
   
   if (!record) {
@@ -80,15 +112,23 @@ const verifySMSOTP = (phoneNumber, userOtp) => {
   
   if (Date.now() > record.expiresAt) {
     smsOtpStore.delete(cleanPhone);
-    return { success: false, message: 'OTP has expired.' };
+    return { success: false, message: 'OTP has expired. Please request a new one.' };
+  }
+  
+  if (record.attempts >= 3) {
+    smsOtpStore.delete(cleanPhone);
+    return { success: false, message: 'Too many failed attempts. Please request a new OTP.' };
   }
   
   if (record.otp !== userOtp) {
-    return { success: false, message: 'Invalid OTP.' };
+    record.attempts++;
+    smsOtpStore.set(cleanPhone, record);
+    return { success: false, message: `Invalid OTP. ${3 - record.attempts} attempts remaining.` };
   }
   
+  // Success - delete OTP
   smsOtpStore.delete(cleanPhone);
-  return { success: true, message: 'OTP verified' };
+  return { success: true, message: 'OTP verified successfully' };
 };
 
 module.exports = { generateSMSOTP, sendSMSOTP, verifySMSOTP };

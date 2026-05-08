@@ -1,23 +1,35 @@
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
-// Create email transporter
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: process.env.EMAIL_PORT,
-  secure: false,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+// Create transporter with RichSol settings
+const createTransporter = () => {
+  // Try different common ports for Indian hosting providers
+  const port = parseInt(process.env.EMAIL_PORT) || 587;
+  const secure = process.env.EMAIL_SECURE === 'true' || port === 465;
+  
+  return nodemailer.createTransport({
+    host: process.env.EMAIL_HOST,
+    port: port,
+    secure: secure,
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+    tls: {
+      rejectUnauthorized: false, // Important for some hosting providers
+    },
+    connectionTimeout: 10000,
+  });
+};
 
 const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Send OTP via Email
+// Send OTP via Email using RichSol
 const sendEmailOTP = async (email, otp, name = 'User') => {
+  console.log(`📧 Attempting to send OTP to ${email} via RichSol...`);
+  
   const templateId = process.env.EMAIL_TEMPLATE_ID;
   const templateName = process.env.EMAIL_TEMPLATE_NAME;
   
@@ -34,7 +46,6 @@ const sendEmailOTP = async (email, otp, name = 'User') => {
         .content { padding: 30px; text-align: center; }
         .otp-code { font-size: 36px; font-weight: bold; color: #667eea; letter-spacing: 5px; margin: 20px 0; padding: 15px; background: #f0f0f0; border-radius: 8px; font-family: monospace; }
         .footer { background: #f8f9fa; padding: 15px; text-align: center; font-size: 12px; color: #666; }
-        .button { display: inline-block; padding: 12px 24px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; margin-top: 20px; }
         .template-id { font-size: 11px; color: #999; margin-top: 10px; }
       </style>
     </head>
@@ -57,22 +68,33 @@ const sendEmailOTP = async (email, otp, name = 'User') => {
           <p>&copy; 2024 OTPless Auth. All rights reserved.</p>
         </div>
       </div>
-    </body>
     </html>
   `;
-
+  
+  const transporter = createTransporter();
+  
   try {
-    await transporter.sendMail({
+    // Verify connection
+    await transporter.verify();
+    console.log('📧 RichSol SMTP connection verified');
+    
+    const info = await transporter.sendMail({
       from: `"OTPless Auth" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: `Your OTP Code - ${templateName}`,
       html: htmlContent,
+      text: `Your OTP code is: ${otp}. Valid for 10 minutes.`,
     });
     
-    console.log(`📧 Email OTP sent to ${email}: ${otp}`);
+    console.log(`📧 Email sent successfully! Message ID: ${info.messageId}`);
     return true;
   } catch (error) {
-    console.error('❌ Email error:', error.message);
+    console.error('❌ RichSol Email error:', error.message);
+    if (error.code === 'EAUTH') {
+      console.error('   Authentication failed. Check EMAIL_USER and EMAIL_PASS');
+    } else if (error.code === 'ESOCKET') {
+      console.error('   Connection failed. Check EMAIL_HOST and EMAIL_PORT');
+    }
     return false;
   }
 };

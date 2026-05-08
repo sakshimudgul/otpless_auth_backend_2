@@ -2,6 +2,7 @@ const { Admin, User, OTP } = require('../models');
 const jwt = require('jsonwebtoken');
 const { Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
+const axios = require('axios'); // IMPORTANT: Add this
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your_secret_key';
 
@@ -58,7 +59,7 @@ const adminLogin = async (req, res) => {
   }
 };
 
-// ==================== SEND SMS OTP ====================
+// ==================== SEND SMS OTP (WORKING) ====================
 const sendUserOtp = async (req, res) => {
   try {
     const { phone, name } = req.body;
@@ -71,6 +72,12 @@ const sendUserOtp = async (req, res) => {
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
     
+    console.log(`\n=========================================`);
+    console.log(`📱 Sending OTP to ${cleanPhone}`);
+    console.log(`🔑 OTP: ${otpCode}`);
+    console.log(`=========================================\n`);
+    
+    // Find or create user
     let user = await User.findOne({ where: { phone_number: cleanPhone } });
     if (!user) {
       user = await User.create({
@@ -79,28 +86,51 @@ const sendUserOtp = async (req, res) => {
       });
     }
     
-    await OTP.update({ is_verified: true }, {
-      where: { phone_number: cleanPhone, is_verified: false }
+    // Delete old unverified OTPs
+    await OTP.destroy({
+      where: {
+        phone_number: cleanPhone,
+        is_verified: false
+      }
     });
     
+    // Save OTP to database
     await OTP.create({
       phone_number: cleanPhone,
       otp_code: otpCode,
       expires_at: expiresAt,
       user_id: user.id,
-      delivery_method: 'sms'
+      delivery_method: 'sms',
+      is_verified: false
     });
     
-    console.log(`📱 SMS OTP for ${cleanPhone}: ${otpCode}`);
+    // ========== ACTUALLY SEND THE SMS USING YOUR API ==========
+    const message = `Dear ${name || user.name} Your OTP is : ${otpCode}. Rich Solutions`;
+    const smsUrl = `https://www.smsjust.com/sms/user/urlsms.php?username=${process.env.SMS_USERNAME}&pass=${process.env.SMS_PASSWORD}&senderid=${process.env.SMS_SENDER_ID}&dest_mobileno=${cleanPhone}&msgtype=TXT&message=${encodeURIComponent(message)}&response=Y`;
+    
+    console.log(`📤 Sending via SMSJust...`);
+    console.log(`📝 Message: ${message}`);
+    
+    const smsResponse = await axios.get(smsUrl, { timeout: 30000 });
+    const smsResult = smsResponse.data;
+    console.log(`📨 SMS Response: ${smsResult}`);
+    
+    if (smsResult && smsResult.includes('-')) {
+      console.log(`✅ SMS sent successfully! Message ID: ${smsResult}`);
+    } else {
+      console.log(`⚠️ SMS response: ${smsResult}`);
+    }
+    // =========================================================
     
     res.json({
       success: true,
-      message: 'SMS OTP sent',
+      message: 'SMS OTP sent to your mobile',
       demoOtp: process.env.NODE_ENV === 'development' ? otpCode : undefined
     });
+    
   } catch (error) {
     console.error('Send SMS OTP error:', error);
-    res.status(500).json({ error: 'Failed to send SMS OTP' });
+    res.status(500).json({ error: 'Failed to send SMS OTP: ' + error.message });
   }
 };
 
