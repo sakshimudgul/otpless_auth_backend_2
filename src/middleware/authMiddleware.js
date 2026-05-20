@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { User, Admin } = require('../models');
+const { Admin, User } = require('../models');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your_secret_key';
 
@@ -16,16 +16,14 @@ const protect = async (req, res, next) => {
       return res.status(401).json({ error: 'Not authorized - No token' });
     }
     
-    console.log('Token received:', token.substring(0, 50) + '...');
-    
+    console.log('Verifying token...');
     const decoded = jwt.verify(token, JWT_SECRET);
     console.log('Decoded token:', decoded);
     
-    // First try to find in Admin table
+    // Check Admin first
     let user = await Admin.findByPk(decoded.id);
     let userType = 'admin';
     
-    // If not found in Admin, try User table
     if (!user) {
       user = await User.findByPk(decoded.id);
       userType = 'user';
@@ -36,17 +34,10 @@ const protect = async (req, res, next) => {
       return res.status(401).json({ error: 'Not authorized - User not found' });
     }
     
-    console.log(`User found in ${userType} table:`, {
-      id: user.id,
-      email: user.email || user.phone_number,
-      role: decoded.role
-    });
+    console.log(`User found in ${userType} table:`, user.email || user.phone_number);
     
-    // Attach user to request object
     req.user = user;
     req.userType = userType;
-    req.userId = user.id;
-    
     next();
   } catch (error) {
     console.error('Auth error:', error.message);
@@ -57,10 +48,8 @@ const protect = async (req, res, next) => {
 const adminOnly = (req, res, next) => {
   console.log('Checking admin access...');
   console.log('User type:', req.userType);
-  console.log('User role from token:', req.user?.role);
   
-  // Check if user is from Admin table or has role 'admin'
-  if (req.userType === 'admin' || req.user?.role === 'admin') {
+  if (req.userType === 'admin') {
     console.log('Admin access granted');
     next();
   } else {

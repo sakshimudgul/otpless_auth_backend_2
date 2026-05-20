@@ -2,7 +2,6 @@ const { Admin, User, OTP } = require('../models');
 const jwt = require('jsonwebtoken');
 const { Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
-const axios = require('axios'); // IMPORTANT: Add this
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your_secret_key';
 
@@ -11,13 +10,23 @@ const generateAccessToken = (id, role) => {
   return jwt.sign({ id, role }, JWT_SECRET, { expiresIn: '7d' });
 };
 
+// Get client IP address
+const getClientIp = (req) => {
+  return req.headers['x-forwarded-for']?.split(',')[0] || 
+         req.socket?.remoteAddress || 
+         req.connection?.remoteAddress ||
+         'unknown';
+};
+
 // ==================== ADMIN LOGIN ====================
 const adminLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
+    const ipAddress = getClientIp(req);
     
     console.log('=== Admin Login ===');
     console.log('Email:', email);
+    console.log('IP:', ipAddress);
     
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password required' });
@@ -30,18 +39,23 @@ const adminLogin = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
-    console.log('Admin found, verifying password...');
-    
     const isValid = await bcrypt.compare(password, admin.password);
-    console.log('Password valid:', isValid);
     
     if (!isValid) {
+      console.log('Invalid password');
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
-    await admin.update({ last_login: new Date() });
+    // Update admin login tracking
+    await admin.update({ 
+      last_login: new Date(),
+      login_count: (admin.login_count || 0) + 1,
+      last_login_ip: ipAddress
+    });
     
     const token = generateAccessToken(admin.id, 'admin');
+    
+    console.log('Login successful');
     
     res.json({
       success: true,
@@ -59,7 +73,7 @@ const adminLogin = async (req, res) => {
   }
 };
 
-// ==================== SEND SMS OTP (WORKING) ====================
+// ==================== SEND OTP ====================
 const sendUserOtp = async (req, res) => {
   try {
     const { phone, name } = req.body;
@@ -72,12 +86,6 @@ const sendUserOtp = async (req, res) => {
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
     
-    console.log(`\n=========================================`);
-    console.log(`📱 Sending OTP to ${cleanPhone}`);
-    console.log(`🔑 OTP: ${otpCode}`);
-    console.log(`=========================================\n`);
-    
-    // Find or create user
     let user = await User.findOne({ where: { phone_number: cleanPhone } });
     if (!user) {
       user = await User.create({
@@ -88,13 +96,10 @@ const sendUserOtp = async (req, res) => {
     
     // Delete old unverified OTPs
     await OTP.destroy({
-      where: {
-        phone_number: cleanPhone,
-        is_verified: false
-      }
+      where: { phone_number: cleanPhone, is_verified: false }
     });
     
-    // Save OTP to database
+    // Save new OTP
     await OTP.create({
       phone_number: cleanPhone,
       otp_code: otpCode,
@@ -104,40 +109,24 @@ const sendUserOtp = async (req, res) => {
       is_verified: false
     });
     
-    // ========== ACTUALLY SEND THE SMS USING YOUR API ==========
-    const message = `Dear ${name || user.name} Your OTP is : ${otpCode}. Rich Solutions`;
-    const smsUrl = `https://www.smsjust.com/sms/user/urlsms.php?username=${process.env.SMS_USERNAME}&pass=${process.env.SMS_PASSWORD}&senderid=${process.env.SMS_SENDER_ID}&dest_mobileno=${cleanPhone}&msgtype=TXT&message=${encodeURIComponent(message)}&response=Y`;
-    
-    console.log(`📤 Sending via SMSJust...`);
-    console.log(`📝 Message: ${message}`);
-    
-    const smsResponse = await axios.get(smsUrl, { timeout: 30000 });
-    const smsResult = smsResponse.data;
-    console.log(`📨 SMS Response: ${smsResult}`);
-    
-    if (smsResult && smsResult.includes('-')) {
-      console.log(`✅ SMS sent successfully! Message ID: ${smsResult}`);
-    } else {
-      console.log(`⚠️ SMS response: ${smsResult}`);
-    }
-    // =========================================================
+    console.log(`📱 SMS OTP for ${cleanPhone}: ${otpCode}`);
     
     res.json({
       success: true,
-      message: 'SMS OTP sent to your mobile',
+      message: 'SMS OTP sent',
       demoOtp: process.env.NODE_ENV === 'development' ? otpCode : undefined
     });
-    
   } catch (error) {
-    console.error('Send SMS OTP error:', error);
-    res.status(500).json({ error: 'Failed to send SMS OTP: ' + error.message });
+    console.error('Send OTP error:', error);
+    res.status(500).json({ error: 'Failed to send OTP' });
   }
 };
 
-// ==================== VERIFY SMS OTP ====================
+// ==================== VERIFY OTP ====================
 const verifyUserOtp = async (req, res) => {
   try {
     const { phone, otp, name } = req.body;
+    const ipAddress = getClientIp(req);
     
     if (!phone || !otp) {
       return res.status(400).json({ error: 'Phone and OTP required' });
@@ -158,8 +147,14 @@ const verifyUserOtp = async (req, res) => {
       return res.status(401).json({ error: 'Invalid or expired OTP' });
     }
     
-    await otpRecord.update({ is_verified: true });
+    // Mark OTP as verified
+    await otpRecord.update({ 
+      is_verified: true,
+      verified_at: new Date(),
+      ip_address: ipAddress
+    });
     
+    // Find or create user
     let user = await User.findOne({ where: { phone_number: cleanPhone } });
     if (!user) {
       user = await User.create({
@@ -170,9 +165,17 @@ const verifyUserOtp = async (req, res) => {
       await user.update({ name });
     }
     
-    await user.update({ last_login: new Date() });
+    // Update user login tracking
+    await user.update({ 
+      last_login: new Date(),
+      last_login_ip: ipAddress,
+      login_count: (user.login_count || 0) + 1,
+      last_login_method: otpRecord.delivery_method || 'sms'
+    });
     
     const token = generateAccessToken(user.id, 'user');
+    
+    console.log(`✅ User ${user.name} logged in via ${otpRecord.delivery_method}`);
     
     res.json({
       success: true,
@@ -181,11 +184,14 @@ const verifyUserOtp = async (req, res) => {
         id: user.id,
         name: user.name,
         phone: user.phone_number,
-        role: 'user'
+        email: user.email,
+        role: 'user',
+        login_count: user.login_count,
+        last_login: user.last_login
       }
     });
   } catch (error) {
-    console.error('Verify SMS OTP error:', error);
+    console.error('Verify OTP error:', error);
     res.status(500).json({ error: 'Failed to verify OTP' });
   }
 };
@@ -215,36 +221,25 @@ const refreshToken = async (req, res) => {
 
 // ==================== LOGOUT ====================
 const logout = async (req, res) => {
-  // No authentication needed - just return success
-  // The frontend will clear the token
   res.json({
     success: true,
     message: 'Logged out successfully'
   });
 };
+
 // ==================== GET CURRENT USER ====================
 const getMe = async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.split(' ')[1];
-    
-    if (!token) {
-      return res.status(401).json({ error: 'No token provided' });
-    }
-    
-    const decoded = jwt.verify(token, JWT_SECRET);
-    
-    if (decoded.role === 'admin') {
-      const admin = await Admin.findByPk(decoded.id, {
-        attributes: { exclude: ['password'] }
-      });
-      return res.json({ success: true, user: admin, role: 'admin' });
-    } else {
-      const user = await User.findByPk(decoded.id, {
-        attributes: { exclude: ['password'] }
-      });
-      return res.json({ success: true, user, role: 'user' });
-    }
+    const user = req.user;
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email || user.phone_number,
+        role: user.role || 'user'
+      }
+    });
   } catch (error) {
     console.error('Get me error:', error);
     res.status(401).json({ error: 'Invalid token' });

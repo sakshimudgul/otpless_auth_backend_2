@@ -11,7 +11,7 @@ const OTP = sequelize.define('OTP', {
     type: DataTypes.STRING(20),
     allowNull: true,
   },
-  email: {  // ✅ ADD THIS FIELD
+  email: {
     type: DataTypes.STRING,
     allowNull: true,
   },
@@ -26,6 +26,10 @@ const OTP = sequelize.define('OTP', {
   expires_at: {
     type: DataTypes.DATE,
     allowNull: false,
+  },
+  verified_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
   },
   user_id: {
     type: DataTypes.UUID,

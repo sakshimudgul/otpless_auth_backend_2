@@ -2,25 +2,27 @@ const { sequelize } = require('../config/database');
 const Admin = require('./Admin');
 const User = require('./User');
 const OTP = require('./OTP');
-const RefreshToken = require('./RefreshToken');
 
-// Define associations carefully - COMMENT OUT problematic ones first
+// Setup associations
+const models = { Admin, User, OTP };
+
+Object.values(models).forEach(model => {
+  if (model.associate) {
+    model.associate(models);
+  }
+});
+
+// Admin associations
+Admin.hasMany(User, { foreignKey: 'created_by', as: 'users' });
+User.belongsTo(Admin, { foreignKey: 'created_by', as: 'creator' });
+
 // User associations
-User.hasMany(OTP, { foreignKey: 'user_id' });
-OTP.belongsTo(User, { foreignKey: 'user_id' });
+User.hasMany(OTP, { foreignKey: 'user_id', as: 'otps' });
+OTP.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
-// Admin associations - COMMENT THESE OUT temporarily
-// Admin.hasMany(User, { foreignKey: 'created_by' });
-// User.belongsTo(Admin, { foreignKey: 'created_by' });
-
-// Admin self-association - COMMENT OUT
-// Admin.hasMany(Admin, { foreignKey: 'created_by', as: 'subAdmins' });
-// Admin.belongsTo(Admin, { foreignKey: 'created_by', as: 'creator' });
-
-module.exports = { 
+module.exports = {
   sequelize,
-  Admin, 
-  User, 
-  OTP, 
-  RefreshToken 
+  Admin,
+  User,
+  OTP,
 };

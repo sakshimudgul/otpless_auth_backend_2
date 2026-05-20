@@ -16,9 +16,6 @@ const Admin = sequelize.define('Admin', {
     type: DataTypes.STRING,
     unique: true,
     allowNull: false,
-    validate: {
-      isEmail: true,
-    },
   },
   password: {
     type: DataTypes.STRING,
@@ -31,7 +28,6 @@ const Admin = sequelize.define('Admin', {
   role: {
     type: DataTypes.STRING,
     defaultValue: 'admin',
-    allowNull: false,
   },
   is_active: {
     type: DataTypes.BOOLEAN,
@@ -45,27 +41,25 @@ const Admin = sequelize.define('Admin', {
     type: DataTypes.DATE,
     allowNull: true,
   },
+  login_count: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
+  last_login_ip: {
+    type: DataTypes.STRING(45),
+    allowNull: true,
+  },
 }, {
   timestamps: true,
   tableName: 'admins',
 });
 
-// Instance method for password validation
 Admin.prototype.validatePassword = async function(password) {
-  if (!this.password) return false;
   return await bcrypt.compare(password, this.password);
 };
 
-// Hooks for password hashing
 Admin.beforeCreate = async (admin) => {
   if (admin.password) {
-    const salt = await bcrypt.genSalt(10);
-    admin.password = await bcrypt.hash(admin.password, salt);
-  }
-};
-
-Admin.beforeUpdate = async (admin) => {
-  if (admin.changed('password')) {
     const salt = await bcrypt.genSalt(10);
     admin.password = await bcrypt.hash(admin.password, salt);
   }

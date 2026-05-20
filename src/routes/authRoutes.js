@@ -1,35 +1,49 @@
 const express = require('express');
-const { 
-  adminLogin, 
-  sendUserOtp, 
-  verifyUserOtp, 
-  refreshToken, 
-  logout, 
-  getMe 
-} = require('../controllers/authController');
-const { getAllUsers, createUser, deleteUser } = require('../controllers/adminController');
-const { protect, adminOnly } = require('../middleware/authMiddleware');
-
 const router = express.Router();
 
-// ============ PUBLIC ROUTES (No authentication required) ============
-router.post('/admin-login', adminLogin);
-router.post('/send-otp', sendUserOtp);
-router.post('/verify-otp', verifyUserOtp);
-router.post('/refresh', refreshToken);
-router.post('/logout', logout);  // ← PUBLIC route
+// Import controllers
+const authController = require('../controllers/authController');
+const adminController = require('../controllers/adminController');
+const { protect, adminOnly } = require('../middleware/authMiddleware');
 
-// ============ PROTECTED ROUTES (Authentication required) ============
-router.get('/me', protect, getMe);
+// ==================== PUBLIC ROUTES (No authentication required) ====================
 
-// ============ ADMIN ONLY ROUTES ============
-router.get('/admin/users', protect, adminOnly, getAllUsers);
-router.post('/admin/users', protect, adminOnly, createUser);
-router.delete('/admin/users/:id', protect, adminOnly, deleteUser);
+// Admin login
+router.post('/admin-login', authController.adminLogin);
 
-// Test route
+// User OTP routes
+router.post('/send-otp', authController.sendUserOtp);
+router.post('/verify-otp', authController.verifyUserOtp);
+
+// Token refresh and logout
+router.post('/refresh', authController.refreshToken);
+router.post('/logout', authController.logout);
+
+// ==================== PROTECTED ROUTES (Authentication required) ====================
+
+// Get current user info
+router.get('/me', protect, authController.getMe);
+
+// ==================== ADMIN ONLY ROUTES (Admin authentication required) ====================
+
+// User management routes
+router.get('/admin/users', protect, adminOnly, adminController.getAllUsers);
+router.get('/admin/users/stats', protect, adminOnly, adminController.getUserStats);
+router.get('/admin/users/:id', protect, adminOnly, adminController.getUserById);
+router.post('/admin/users', protect, adminOnly, adminController.createUser);
+router.put('/admin/users/:id', protect, adminOnly, adminController.updateUser);
+router.delete('/admin/users/:id', protect, adminOnly, adminController.deleteUser);
+
+// Login statistics routes
+router.get('/admin/login-stats', protect, adminOnly, adminController.getLoginStats);
+
+// ==================== TEST ROUTE ====================
 router.get('/test', (req, res) => {
-  res.json({ message: 'Auth routes working', timestamp: new Date() });
+  res.json({ 
+    success: true, 
+    message: 'Auth routes are working!',
+    timestamp: new Date().toISOString()
+  });
 });
 
 module.exports = router;
