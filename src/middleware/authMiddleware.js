@@ -7,53 +7,47 @@ const protect = async (req, res, next) => {
   try {
     let token;
     
+    // Try to get token from Authorization header first (backward compatible)
     if (req.headers.authorization?.startsWith('Bearer')) {
       token = req.headers.authorization.split(' ')[1];
     }
     
+    // If no token in header, try to get from cookie
+    if (!token && req.cookies?.token) {
+      token = req.cookies.token;
+    }
+    
     if (!token) {
-      console.log('No token provided');
       return res.status(401).json({ error: 'Not authorized - No token' });
     }
     
-    console.log('Verifying token...');
     const decoded = jwt.verify(token, JWT_SECRET);
-    console.log('Decoded token:', decoded);
     
-    // Check Admin first
-    let user = await Admin.findByPk(decoded.id);
+    let user = await Admin.findById(decoded.id);
     let userType = 'admin';
     
     if (!user) {
-      user = await User.findByPk(decoded.id);
+      user = await User.findById(decoded.id);
       userType = 'user';
     }
     
     if (!user) {
-      console.log('User not found for id:', decoded.id);
       return res.status(401).json({ error: 'Not authorized - User not found' });
     }
-    
-    console.log(`User found in ${userType} table:`, user.email || user.phone_number);
     
     req.user = user;
     req.userType = userType;
     next();
   } catch (error) {
     console.error('Auth error:', error.message);
-    res.status(401).json({ error: 'Not authorized - ' + error.message });
+    res.status(401).json({ error: 'Not authorized - Invalid token' });
   }
 };
 
 const adminOnly = (req, res, next) => {
-  console.log('Checking admin access...');
-  console.log('User type:', req.userType);
-  
   if (req.userType === 'admin') {
-    console.log('Admin access granted');
     next();
   } else {
-    console.log('Admin access denied');
     res.status(403).json({ error: 'Admin access required' });
   }
 };

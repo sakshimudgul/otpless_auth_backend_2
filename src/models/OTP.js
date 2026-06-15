@@ -1,47 +1,64 @@
-const { DataTypes } = require('sequelize');
-const { sequelize } = require('../config/database');
+const { getOne, run } = require('../config/database');
+const crypto = require('crypto');
 
-const OTP = sequelize.define('OTP', {
-  id: {
-    type: DataTypes.UUID,
-    defaultValue: DataTypes.UUIDV4,
-    primaryKey: true,
+const OTP = {
+  create: async (otpData) => {
+    const id = crypto.randomUUID();
+    await run(
+      `INSERT INTO otps (id, phone_number, email, otp_code, expires_at, user_id, delivery_method, ip_address, user_agent) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        otpData.phone_number || null,
+        otpData.email || null,
+        otpData.otp_code,
+        otpData.expires_at,
+        otpData.user_id || null,
+        otpData.delivery_method || 'sms',
+        otpData.ip_address || null,
+        otpData.user_agent || null
+      ]
+    );
+    return await OTP.findById(id);
   },
-  phone_number: {
-    type: DataTypes.STRING(20),
-    allowNull: true,
+  
+  findById: async (id) => {
+    return await getOne('SELECT * FROM otps WHERE id = ?', [id]);
   },
-  email: {
-    type: DataTypes.STRING,
-    allowNull: true,
+  
+  findValidOTP: async (phoneNumber, otpCode) => {
+    const cleanPhone = phoneNumber.replace(/\D/g, '');
+    return await getOne(
+      `SELECT * FROM otps 
+       WHERE phone_number = ? 
+       AND otp_code = ? 
+       AND is_verified = 0 
+       AND expires_at > CURRENT_TIMESTAMP`,
+      [cleanPhone, otpCode]
+    );
   },
-  otp_code: {
-    type: DataTypes.STRING(6),
-    allowNull: false,
+  
+  findValidEmailOTP: async (email, otpCode) => {
+    return await getOne(
+      `SELECT * FROM otps 
+       WHERE email = ? 
+       AND otp_code = ? 
+       AND is_verified = 0 
+       AND expires_at > CURRENT_TIMESTAMP`,
+      [email, otpCode]
+    );
   },
-  is_verified: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: false,
+  
+  markVerified: async (id) => {
+    await run(`UPDATE otps SET is_verified = 1, verified_at = CURRENT_TIMESTAMP WHERE id = ?`, [id]);
+    return true;
   },
-  expires_at: {
-    type: DataTypes.DATE,
-    allowNull: false,
+  
+  deleteExpiredForPhone: async (phoneNumber) => {
+    const cleanPhone = phoneNumber.replace(/\D/g, '');
+    await run('DELETE FROM otps WHERE phone_number = ? AND (is_verified = 1 OR expires_at < CURRENT_TIMESTAMP)', [cleanPhone]);
+    return true;
   },
-  verified_at: {
-    type: DataTypes.DATE,
-    allowNull: true,
-  },
-  user_id: {
-    type: DataTypes.UUID,
-    allowNull: true,
-  },
-  delivery_method: {
-    type: DataTypes.STRING,
-    defaultValue: 'sms',
-  },
-}, {
-  timestamps: true,
-  tableName: 'otps',
-});
+};
 
 module.exports = OTP;

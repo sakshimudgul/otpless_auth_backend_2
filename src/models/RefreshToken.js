@@ -1,35 +1,44 @@
-const { getOne, run } = require('../config/database');
-const crypto = require('crypto');
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/database');
 
-const RefreshToken = {
-  create: async (userId, token, expiresAt) => {
-    const id = crypto.randomUUID();
-    await run(
-      `INSERT INTO refresh_tokens (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)`,
-      [id, userId, token, expiresAt]
-    );
-    return id;
+const RefreshToken = sequelize.define('RefreshToken', {
+  id: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true,
   },
-
-  findByToken: async (token) => {
-    return await getOne(
-      `SELECT * FROM refresh_tokens 
-       WHERE token = ? AND revoked = 0 AND expires_at > CURRENT_TIMESTAMP`,
-      [token]
-    );
+  token: {
+    type: DataTypes.TEXT,
+    allowNull: false,
+    unique: true,
   },
-
-  revoke: async (token) => {
-    await run(`UPDATE refresh_tokens SET revoked = 1 WHERE token = ?`, [token]);
+  user_id: {
+    type: DataTypes.UUID,
+    allowNull: false,
   },
-
-  revokeAllUserTokens: async (userId) => {
-    await run(`UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?`, [userId]);
+  user_type: {
+    type: DataTypes.STRING,
+    allowNull: false,
   },
-
-  cleanup: async () => {
-    await run(`DELETE FROM refresh_tokens WHERE expires_at < CURRENT_TIMESTAMP OR revoked = 1`);
-  }
-};
+  expires_at: {
+    type: DataTypes.DATE,
+    allowNull: false,
+  },
+  is_revoked: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+  },
+  revoked_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+  ip_address: {
+    type: DataTypes.STRING(45),
+    allowNull: true,
+  },
+}, {
+  timestamps: true,
+  tableName: 'refresh_tokens',
+});
 
 module.exports = RefreshToken;

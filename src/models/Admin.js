@@ -1,68 +1,68 @@
-const { DataTypes } = require('sequelize');
-const { sequelize } = require('../config/database');
+const { getOne, run } = require('../config/database');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
-const Admin = sequelize.define('Admin', {
-  id: {
-    type: DataTypes.UUID,
-    defaultValue: DataTypes.UUIDV4,
-    primaryKey: true,
+const Admin = {
+  findById: async (id) => {
+    try {
+      return await getOne('SELECT * FROM admins WHERE id = ?', [id]);
+    } catch (error) {
+      console.error('Admin.findById error:', error);
+      return null;
+    }
   },
-  name: {
-    type: DataTypes.STRING,
-    allowNull: false,
+  
+  findByEmail: async (email) => {
+    try {
+      return await getOne('SELECT * FROM admins WHERE email = ?', [email]);
+    } catch (error) {
+      console.error('Admin.findByEmail error:', error);
+      return null;
+    }
   },
-  email: {
-    type: DataTypes.STRING,
-    unique: true,
-    allowNull: false,
+  
+  create: async (adminData) => {
+    try {
+      const id = crypto.randomUUID();
+      const hashedPassword = await bcrypt.hash(adminData.password, 10);
+      
+      await run(
+        `INSERT INTO admins (id, name, email, password, phone, role, is_active) 
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [id, adminData.name, adminData.email, hashedPassword, adminData.phone || null, 'admin', 1]
+      );
+      return await Admin.findById(id);
+    } catch (error) {
+      console.error('Admin.create error:', error);
+      return null;
+    }
   },
-  password: {
-    type: DataTypes.STRING,
-    allowNull: false,
+  
+  updateLogin: async (id, ip) => {
+    try {
+      await run(
+        `UPDATE admins SET 
+          login_count = login_count + 1, 
+          last_login = CURRENT_TIMESTAMP, 
+          last_login_ip = ?
+         WHERE id = ?`,
+        [ip, id]
+      );
+      return await Admin.findById(id);
+    } catch (error) {
+      console.error('Admin.updateLogin error:', error);
+      return null;
+    }
   },
-  phone: {
-    type: DataTypes.STRING(20),
-    allowNull: true,
+  
+  verifyPassword: async (admin, password) => {
+    try {
+      return await bcrypt.compare(password, admin.password);
+    } catch (error) {
+      console.error('Admin.verifyPassword error:', error);
+      return false;
+    }
   },
-  role: {
-    type: DataTypes.STRING,
-    defaultValue: 'admin',
-  },
-  is_active: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: true,
-  },
-  created_by: {
-    type: DataTypes.UUID,
-    allowNull: true,
-  },
-  last_login: {
-    type: DataTypes.DATE,
-    allowNull: true,
-  },
-  login_count: {
-    type: DataTypes.INTEGER,
-    defaultValue: 0,
-  },
-  last_login_ip: {
-    type: DataTypes.STRING(45),
-    allowNull: true,
-  },
-}, {
-  timestamps: true,
-  tableName: 'admins',
-});
-
-Admin.prototype.validatePassword = async function(password) {
-  return await bcrypt.compare(password, this.password);
-};
-
-Admin.beforeCreate = async (admin) => {
-  if (admin.password) {
-    const salt = await bcrypt.genSalt(10);
-    admin.password = await bcrypt.hash(admin.password, salt);
-  }
 };
 
 module.exports = Admin;

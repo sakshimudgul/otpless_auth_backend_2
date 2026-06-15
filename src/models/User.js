@@ -1,63 +1,141 @@
-const { DataTypes } = require('sequelize');
-const { sequelize } = require('../config/database');
-const bcrypt = require('bcryptjs');
+const { getOne, getAll, run } = require('../config/database');
+const crypto = require('crypto');
 
-const User = sequelize.define('User', {
-  id: {
-    type: DataTypes.UUID,
-    defaultValue: DataTypes.UUIDV4,
-    primaryKey: true,
+const User = {
+  findById: async (id) => {
+    try {
+      return await getOne('SELECT * FROM users WHERE id = ?', [id]);
+    } catch (error) {
+      console.error('User.findById error:', error);
+      return null;
+    }
   },
-  name: {
-    type: DataTypes.STRING,
-    allowNull: false,
+  
+  findByPhone: async (phoneNumber) => {
+    try {
+      const cleanPhone = phoneNumber.replace(/\D/g, '');
+      return await getOne('SELECT * FROM users WHERE phone_number = ?', [cleanPhone]);
+    } catch (error) {
+      console.error('User.findByPhone error:', error);
+      return null;
+    }
   },
-  email: {
-    type: DataTypes.STRING,
-    unique: true,
-    allowNull: true,
+  
+  getAll: async () => {
+    try {
+      return await getAll('SELECT * FROM users ORDER BY created_at DESC');
+    } catch (error) {
+      console.error('User.getAll error:', error);
+      return [];
+    }
   },
-  phone_number: {
-    type: DataTypes.STRING(20),
-    unique: true,
-    allowNull: false,
+  
+  getCount: async () => {
+    try {
+      const result = await getOne('SELECT COUNT(*) as count FROM users');
+      return result?.count || 0;
+    } catch (error) {
+      return 0;
+    }
   },
-  password: {
-    type: DataTypes.STRING,
-    allowNull: true,
+  
+  create: async (userData) => {
+    try {
+      const id = crypto.randomUUID();
+      await run(
+        `INSERT INTO users (id, name, phone_number, email, role, is_active, created_by) 
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id, 
+          userData.name, 
+          userData.phone_number, 
+          userData.email || null, 
+          userData.role || 'user', 
+          userData.is_active !== undefined ? userData.is_active : 1,
+          userData.created_by || null
+        ]
+      );
+      return await User.findById(id);
+    } catch (error) {
+      console.error('User.create error:', error);
+      throw error;
+    }
   },
-  role: {
-    type: DataTypes.STRING,
-    defaultValue: 'user',
+  
+  update: async (id, updates) => {
+    try {
+      const fields = [];
+      const values = [];
+      
+      if (updates.name !== undefined) {
+        fields.push('name = ?');
+        values.push(updates.name);
+      }
+      if (updates.email !== undefined) {
+        fields.push('email = ?');
+        values.push(updates.email);
+      }
+      if (updates.is_active !== undefined) {
+        fields.push('is_active = ?');
+        values.push(updates.is_active ? 1 : 0);
+      }
+      if (updates.last_login !== undefined) {
+        fields.push('last_login = ?');
+        values.push(updates.last_login);
+      }
+      if (updates.last_login_ip !== undefined) {
+        fields.push('last_login_ip = ?');
+        values.push(updates.last_login_ip);
+      }
+      if (updates.login_count !== undefined) {
+        fields.push('login_count = ?');
+        values.push(updates.login_count);
+      }
+      if (updates.last_login_method !== undefined) {
+        fields.push('last_login_method = ?');
+        values.push(updates.last_login_method);
+      }
+      
+      if (fields.length === 0) return await User.findById(id);
+      
+      fields.push('updated_at = CURRENT_TIMESTAMP');
+      values.push(id);
+      
+      await run(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, values);
+      return await User.findById(id);
+    } catch (error) {
+      console.error('User.update error:', error);
+      throw error;
+    }
   },
-  is_active: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: true,
+  
+  incrementLoginCount: async (id, ip, method) => {
+    try {
+      await run(
+        `UPDATE users SET 
+          login_count = login_count + 1, 
+          last_login = CURRENT_TIMESTAMP, 
+          last_login_ip = ?,
+          last_login_method = ?
+         WHERE id = ?`,
+        [ip, method, id]
+      );
+      return await User.findById(id);
+    } catch (error) {
+      console.error('User.incrementLoginCount error:', error);
+      return null;
+    }
   },
-  created_by: {
-    type: DataTypes.UUID,
-    allowNull: true,
+  
+  delete: async (id) => {
+    try {
+      await run('DELETE FROM users WHERE id = ?', [id]);
+      return true;
+    } catch (error) {
+      console.error('User.delete error:', error);
+      return false;
+    }
   },
-  // Login tracking fields
-  last_login: {
-    type: DataTypes.DATE,
-    allowNull: true,
-  },
-  last_login_ip: {
-    type: DataTypes.STRING(45),
-    allowNull: true,
-  },
-  login_count: {
-    type: DataTypes.INTEGER,
-    defaultValue: 0,
-  },
-  last_login_method: {
-    type: DataTypes.STRING,
-    allowNull: true,
-  },
-}, {
-  timestamps: true,
-  tableName: 'users',
-});
+};
 
 module.exports = User;

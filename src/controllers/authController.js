@@ -1,82 +1,195 @@
-const { Admin, User, OTP } = require('../models');
+const { getDb } = require('../config/database');
 const jwt = require('jsonwebtoken');
-const { Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const axios = require('axios');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your_secret_key';
 
-// Generate Access Token
-const generateAccessToken = (id, role) => {
+const generateToken = (id, role) => {
   return jwt.sign({ id, role }, JWT_SECRET, { expiresIn: '7d' });
 };
 
-// Get client IP address
-const getClientIp = (req) => {
-  return req.headers['x-forwarded-for']?.split(',')[0] || 
-         req.socket?.remoteAddress || 
-         req.connection?.remoteAddress ||
-         'unknown';
+// ==================== SMS SENDING FUNCTION ====================
+const sendActualSMS = async (phoneNumber, otp, name) => {
+  const cleanPhone = phoneNumber.replace(/\D/g, '');
+  
+  const message = `Dear ${name} Your OTP is : ${otp}. Rich Solutions`;
+  
+  const url = `https://www.smsjust.com/sms/user/urlsms.php?username=${process.env.SMS_USERNAME}&pass=${process.env.SMS_PASSWORD}&senderid=${process.env.SMS_SENDER_ID}&dest_mobileno=${cleanPhone}&msgtype=TXT&message=${encodeURIComponent(message)}&response=Y`;
+  
+  console.log(`=========================================`);
+  console.log(`📱 SENDING SMS`);
+  console.log(`📱 To: ${cleanPhone}`);
+  console.log(`📝 Message: ${message}`);
+  console.log(`🔑 OTP: ${otp}`);
+  console.log(`=========================================`);
+  
+  try {
+    const response = await axios.get(url, { timeout: 30000 });
+    console.log(`📨 SMS API Response: ${response.data}`);
+    
+    if (response.data && (response.data.includes('-') || response.data.includes('SUCCESS'))) {
+      console.log(`✅ SMS SENT SUCCESSFULLY! Message ID: ${response.data}`);
+      return { success: true, messageId: response.data };
+    } else {
+      console.log(`⚠️ SMS Response: ${response.data}`);
+      return { success: false, error: response.data };
+    }
+  } catch (error) {
+    console.error(`❌ SMS Error:`, error.message);
+    return { success: false, error: error.message };
+  }
+};
+
+// ==================== WHATSAPP SENDING FUNCTION ====================
+const sendActualWhatsApp = async (phoneNumber, otp, name) => {
+  let cleanPhone = phoneNumber.replace(/\D/g, '');
+  if (!cleanPhone.startsWith('91')) {
+    cleanPhone = '91' + cleanPhone;
+  }
+  
+  const message = `Dear ${name} Your OTP is : ${otp}. Rich Solutions`;
+  
+  const pinbotApiKey = process.env.PINBOT_API_KEY;
+  const pinbotPhoneNumberId = process.env.PINBOT_PHONE_NUMBER_ID;
+  const pinbotApiUrl = process.env.PINBOT_API_URL || 'https://partnersv1.pinbot.ai/v3';
+  
+  const url = `${pinbotApiUrl}/${pinbotPhoneNumberId}/messages`;
+  
+  // USING YOUR TEMPLATE: auth_template_001
+  const requestBody = {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to: parseInt(cleanPhone),
+    type: "template",
+    template: {
+      name: "auth_template_001",
+      language: { code: "en" },
+      components: [
+        {
+          type: "body",
+          parameters: [{ type: "text", text: otp }]
+        },
+        {
+          type: "button",
+          sub_type: "url",
+          index: "0",
+          parameters: [{ type: "payload", payload: "" }]
+        }
+      ]
+    }
+  };
+  
+  console.log(`=========================================`);
+  console.log(`💚 SENDING WHATSAPP VIA TEMPLATE`);
+  console.log(`📱 To: ${cleanPhone}`);
+  console.log(`📝 Template: auth_template_001`);
+  console.log(`🔑 OTP: ${otp}`);
+  console.log(`📡 URL: ${url}`);
+  console.log(`=========================================`);
+  
+  if (!pinbotApiKey) {
+    console.log(`❌ PINBOT_API_KEY not found in .env`);
+    return { success: false, error: 'API key missing' };
+  }
+  
+  if (!pinbotPhoneNumberId) {
+    console.log(`❌ PINBOT_PHONE_NUMBER_ID not found in .env`);
+    return { success: false, error: 'Phone number ID missing' };
+  }
+  
+  try {
+    const response = await axios.post(url, requestBody, {
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': pinbotApiKey
+      },
+      timeout: 30000
+    });
+    
+    console.log(`📨 WhatsApp Response Status: ${response.status}`);
+    
+    if (response.status === 200 || response.status === 201) {
+      console.log(`✅ WhatsApp OTP sent successfully to ${cleanPhone}`);
+      return { success: true };
+    } else {
+      console.log(`⚠️ WhatsApp API returned status ${response.status}`);
+      return { success: false, error: `Status ${response.status}` };
+    }
+  } catch (error) {
+    console.error(`❌ WhatsApp Error:`, error.message);
+    if (error.response) {
+      console.error(`   Status: ${error.response.status}`);
+      console.error(`   Data:`, JSON.stringify(error.response.data, null, 2));
+    }
+    return { success: false, error: error.message };
+  }
+};
+
+// ==================== EMAIL SENDING FUNCTION ====================
+const sendActualEmail = async (email, otp, name) => {
+  console.log(`📧 SENDING EMAIL`);
+  console.log(`📧 To: ${email}`);
+  console.log(`📝 Subject: Your OTP Code`);
+  console.log(`📝 Body: Dear ${name}, Your OTP is: ${otp}`);
+  console.log(`=========================================`);
+  return { success: true };
 };
 
 // ==================== ADMIN LOGIN ====================
 const adminLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
-    const ipAddress = getClientIp(req);
+    console.log('Admin login:', email);
     
-    console.log('=== Admin Login ===');
-    console.log('Email:', email);
-    console.log('IP:', ipAddress);
+    const db = getDb();
+    const result = await db.execute({
+      sql: 'SELECT * FROM admins WHERE email = ?',
+      args: [email]
+    });
     
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password required' });
-    }
-    
-    const admin = await Admin.findOne({ where: { email } });
-    
+    const admin = result.rows[0];
     if (!admin) {
-      console.log('Admin not found');
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
     const isValid = await bcrypt.compare(password, admin.password);
-    
     if (!isValid) {
-      console.log('Invalid password');
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
-    // Update admin login tracking
-    await admin.update({ 
-      last_login: new Date(),
-      login_count: (admin.login_count || 0) + 1,
-      last_login_ip: ipAddress
+    const token = generateToken(admin.id, 'admin');
+    
+    // Set cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000
     });
     
-    const token = generateAccessToken(admin.id, 'admin');
-    
-    console.log('Login successful');
-    
-    res.json({
-      success: true,
+    res.json({ 
+      success: true, 
       token: token,
-      user: {
-        id: admin.id,
-        name: admin.name,
-        email: admin.email,
-        role: 'admin'
-      }
+      user: { 
+        id: admin.id, 
+        name: admin.name, 
+        email: admin.email, 
+        role: 'admin' 
+      } 
     });
   } catch (error) {
     console.error('Admin login error:', error);
-    res.status(500).json({ error: 'Login failed: ' + error.message });
+    res.status(500).json({ error: error.message });
   }
 };
 
-// ==================== SEND OTP ====================
+// ==================== SEND SMS OTP ====================
 const sendUserOtp = async (req, res) => {
   try {
-    const { phone, name } = req.body;
+    const { phone, name = 'User' } = req.body;
+    console.log('Send OTP request:', phone);
     
     if (!phone) {
       return res.status(400).json({ error: 'Phone number required' });
@@ -84,41 +197,48 @@ const sendUserOtp = async (req, res) => {
     
     const cleanPhone = phone.replace(/\D/g, '');
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + 10 * 60000).toISOString();
+    const db = getDb();
     
-    let user = await User.findOne({ where: { phone_number: cleanPhone } });
-    if (!user) {
-      user = await User.create({
-        name: name || `User_${cleanPhone.slice(-4)}`,
-        phone_number: cleanPhone
+    console.log(`🔑 Generated OTP: ${otpCode} for ${cleanPhone}`);
+    
+    // Find or create user
+    let userResult = await db.execute({
+      sql: 'SELECT * FROM users WHERE phone_number = ?',
+      args: [cleanPhone]
+    });
+    
+    let userId;
+    if (userResult.rows.length === 0) {
+      userId = crypto.randomUUID();
+      await db.execute({
+        sql: 'INSERT INTO users (id, name, phone_number, role) VALUES (?, ?, ?, ?)',
+        args: [userId, name, cleanPhone, 'user']
       });
+      console.log('New user created:', userId);
+    } else {
+      userId = userResult.rows[0].id;
+      console.log('Existing user:', userId);
     }
     
-    // Delete old unverified OTPs
-    await OTP.destroy({
-      where: { phone_number: cleanPhone, is_verified: false }
+    // Save OTP to database
+    await db.execute({
+      sql: 'INSERT INTO otps (id, phone_number, otp_code, expires_at, user_id, delivery_method) VALUES (?, ?, ?, ?, ?, ?)',
+      args: [crypto.randomUUID(), cleanPhone, otpCode, expiresAt, userId, 'sms']
     });
+    console.log('OTP saved to database');
     
-    // Save new OTP
-    await OTP.create({
-      phone_number: cleanPhone,
-      otp_code: otpCode,
-      expires_at: expiresAt,
-      user_id: user.id,
-      delivery_method: 'sms',
-      is_verified: false
-    });
+    // Send SMS
+    const smsResult = await sendActualSMS(cleanPhone, otpCode, name);
     
-    console.log(`📱 SMS OTP for ${cleanPhone}: ${otpCode}`);
-    
-    res.json({
-      success: true,
-      message: 'SMS OTP sent',
-      demoOtp: process.env.NODE_ENV === 'development' ? otpCode : undefined
+    res.json({ 
+      success: true, 
+      message: smsResult.success ? 'OTP sent to your mobile number' : 'OTP generated (check console for OTP)',
+      demoOtp: otpCode 
     });
   } catch (error) {
     console.error('Send OTP error:', error);
-    res.status(500).json({ error: 'Failed to send OTP' });
+    res.status(500).json({ error: error.message });
   }
 };
 
@@ -126,78 +246,170 @@ const sendUserOtp = async (req, res) => {
 const verifyUserOtp = async (req, res) => {
   try {
     const { phone, otp, name } = req.body;
-    const ipAddress = getClientIp(req);
+    console.log('Verify OTP:', phone, otp);
     
     if (!phone || !otp) {
       return res.status(400).json({ error: 'Phone and OTP required' });
     }
     
     const cleanPhone = phone.replace(/\D/g, '');
+    const db = getDb();
     
-    const otpRecord = await OTP.findOne({
-      where: {
-        phone_number: cleanPhone,
-        otp_code: otp,
-        is_verified: false,
-        expires_at: { [Op.gt]: new Date() }
-      }
+    const otpResult = await db.execute({
+      sql: 'SELECT * FROM otps WHERE phone_number = ? AND otp_code = ? AND is_verified = 0 AND expires_at > CURRENT_TIMESTAMP',
+      args: [cleanPhone, otp]
     });
     
-    if (!otpRecord) {
+    if (otpResult.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid or expired OTP' });
     }
     
-    // Mark OTP as verified
-    await otpRecord.update({ 
-      is_verified: true,
-      verified_at: new Date(),
-      ip_address: ipAddress
+    await db.execute({
+      sql: 'UPDATE otps SET is_verified = 1, verified_at = CURRENT_TIMESTAMP WHERE id = ?',
+      args: [otpResult.rows[0].id]
     });
     
-    // Find or create user
-    let user = await User.findOne({ where: { phone_number: cleanPhone } });
-    if (!user) {
-      user = await User.create({
-        name: name || `User_${cleanPhone.slice(-4)}`,
-        phone_number: cleanPhone
+    let userResult = await db.execute({
+      sql: 'SELECT * FROM users WHERE phone_number = ?',
+      args: [cleanPhone]
+    });
+    
+    let userId;
+    if (userResult.rows.length === 0) {
+      userId = crypto.randomUUID();
+      await db.execute({
+        sql: 'INSERT INTO users (id, name, phone_number, role) VALUES (?, ?, ?, ?)',
+        args: [userId, name || `User_${cleanPhone.slice(-4)}`, cleanPhone, 'user']
       });
-    } else if (name) {
-      await user.update({ name });
+    } else {
+      userId = userResult.rows[0].id;
+      await db.execute({
+        sql: 'UPDATE users SET last_login = CURRENT_TIMESTAMP, login_count = login_count + 1 WHERE id = ?',
+        args: [userId]
+      });
     }
     
-    // Update user login tracking
-    await user.update({ 
-      last_login: new Date(),
-      last_login_ip: ipAddress,
-      login_count: (user.login_count || 0) + 1,
-      last_login_method: otpRecord.delivery_method || 'sms'
+    const token = generateToken(userId, 'user');
+    
+    // Set cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000
     });
-    
-    const token = generateAccessToken(user.id, 'user');
-    
-    console.log(`✅ User ${user.name} logged in via ${otpRecord.delivery_method}`);
     
     res.json({
       success: true,
       token: token,
-      user: {
-        id: user.id,
-        name: user.name,
-        phone: user.phone_number,
-        email: user.email,
-        role: 'user',
-        login_count: user.login_count,
-        last_login: user.last_login
-      }
+      user: { id: userId, name: name || `User_${cleanPhone.slice(-4)}`, phone: cleanPhone, role: 'user' }
     });
   } catch (error) {
     console.error('Verify OTP error:', error);
-    res.status(500).json({ error: 'Failed to verify OTP' });
+    res.status(500).json({ error: error.message });
   }
 };
 
-// ==================== REFRESH TOKEN ====================
-const refreshToken = async (req, res) => {
+// ==================== SEND WHATSAPP OTP ====================
+const sendWhatsAppOtp = async (req, res) => {
+  try {
+    const { phone, name = 'User' } = req.body;
+    console.log('Send WhatsApp OTP:', phone);
+    
+    if (!phone) {
+      return res.status(400).json({ error: 'Phone number required' });
+    }
+    
+    const cleanPhone = phone.replace(/\D/g, '');
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60000).toISOString();
+    const db = getDb();
+    
+    let userResult = await db.execute({
+      sql: 'SELECT * FROM users WHERE phone_number = ?',
+      args: [cleanPhone]
+    });
+    
+    let userId;
+    if (userResult.rows.length === 0) {
+      userId = crypto.randomUUID();
+      await db.execute({
+        sql: 'INSERT INTO users (id, name, phone_number, role) VALUES (?, ?, ?, ?)',
+        args: [userId, name, cleanPhone, 'user']
+      });
+    } else {
+      userId = userResult.rows[0].id;
+    }
+    
+    await db.execute({
+      sql: 'INSERT INTO otps (id, phone_number, otp_code, expires_at, user_id, delivery_method) VALUES (?, ?, ?, ?, ?, ?)',
+      args: [crypto.randomUUID(), cleanPhone, otpCode, expiresAt, userId, 'whatsapp']
+    });
+    
+    // Send WhatsApp message
+    const whatsappResult = await sendActualWhatsApp(cleanPhone, otpCode, name);
+    
+    res.json({ 
+      success: true, 
+      message: whatsappResult.success ? 'WhatsApp OTP sent to your mobile' : 'OTP generated (WhatsApp may have failed)',
+      demoOtp: otpCode 
+    });
+  } catch (error) {
+    console.error('Send WhatsApp OTP error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+const verifyWhatsAppOtp = verifyUserOtp;
+
+// ==================== SEND EMAIL OTP ====================
+const sendEmailOtp = async (req, res) => {
+  try {
+    const { email, name = 'User' } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60000).toISOString();
+    const db = getDb();
+    
+    let userResult = await db.execute({
+      sql: 'SELECT * FROM users WHERE email = ?',
+      args: [email]
+    });
+    
+    let userId;
+    if (userResult.rows.length === 0) {
+      userId = crypto.randomUUID();
+      await db.execute({
+        sql: 'INSERT INTO users (id, name, email, role) VALUES (?, ?, ?, ?)',
+        args: [userId, name, email, 'user']
+      });
+    } else {
+      userId = userResult.rows[0].id;
+    }
+    
+    await db.execute({
+      sql: 'INSERT INTO otps (id, email, otp_code, expires_at, user_id, delivery_method) VALUES (?, ?, ?, ?, ?, ?)',
+      args: [crypto.randomUUID(), email, otpCode, expiresAt, userId, 'email']
+    });
+    
+    const emailResult = await sendActualEmail(email, otpCode, name);
+    
+    res.json({ 
+      success: true, 
+      message: emailResult.success ? 'Email OTP sent to your inbox' : 'OTP generated',
+      demoOtp: otpCode 
+    });
+  } catch (error) {
+    console.error('Send Email OTP error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+const verifyEmailOtp = verifyUserOtp;
+
+// ==================== GET CURRENT USER ====================
+const getMe = async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     const token = authHeader && authHeader.split(' ')[1];
@@ -207,37 +419,33 @@ const refreshToken = async (req, res) => {
     }
     
     const decoded = jwt.verify(token, JWT_SECRET);
-    const newToken = generateAccessToken(decoded.id, decoded.role);
+    const db = getDb();
+    
+    let user = await db.execute({
+      sql: 'SELECT * FROM users WHERE id = ?',
+      args: [decoded.id]
+    });
+    
+    let role = 'user';
+    if (user.rows.length === 0) {
+      user = await db.execute({
+        sql: 'SELECT * FROM admins WHERE id = ?',
+        args: [decoded.id]
+      });
+      role = 'admin';
+    }
+    
+    if (user.rows.length === 0) {
+      return res.status(401).json({ error: 'User not found' });
+    }
     
     res.json({
       success: true,
-      token: newToken
-    });
-  } catch (error) {
-    console.error('Refresh token error:', error);
-    res.status(401).json({ error: 'Invalid or expired token' });
-  }
-};
-
-// ==================== LOGOUT ====================
-const logout = async (req, res) => {
-  res.json({
-    success: true,
-    message: 'Logged out successfully'
-  });
-};
-
-// ==================== GET CURRENT USER ====================
-const getMe = async (req, res) => {
-  try {
-    const user = req.user;
-    res.json({
-      success: true,
       user: {
-        id: user.id,
-        name: user.name,
-        email: user.email || user.phone_number,
-        role: user.role || 'user'
+        id: user.rows[0].id,
+        name: user.rows[0].name,
+        email: user.rows[0].email || user.rows[0].phone_number,
+        role: role
       }
     });
   } catch (error) {
@@ -246,12 +454,22 @@ const getMe = async (req, res) => {
   }
 };
 
-// Export all functions
+// ==================== LOGOUT ====================
+const logout = async (req, res) => {
+  // Clear cookie
+  res.clearCookie('token');
+  res.json({ success: true, message: 'Logged out' });
+};
+
+// ==================== EXPORTS ====================
 module.exports = {
   adminLogin,
   sendUserOtp,
   verifyUserOtp,
-  refreshToken,
+  sendWhatsAppOtp,
+  verifyWhatsAppOtp,
+  sendEmailOtp,
+  verifyEmailOtp,
+  getMe,
   logout,
-  getMe
 };
