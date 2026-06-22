@@ -1,14 +1,15 @@
 const { getDb } = require('../config/database');
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 
-// Get all users
+// ==================== GET ALL USERS (End Users) ====================
 const getAllUsers = async (req, res) => {
   try {
     const db = getDb();
     const result = await db.execute({
-      sql: 'SELECT * FROM users ORDER BY created_at DESC'
+      sql: 'SELECT * FROM users WHERE role = ? ORDER BY created_at DESC',
+      args: ['user']
     });
-    
     res.json({ success: true, users: result.rows });
   } catch (error) {
     console.error('Get all users error:', error);
@@ -16,21 +17,33 @@ const getAllUsers = async (req, res) => {
   }
 };
 
-// Get user by ID
+// ==================== GET BUSINESS USERS ====================
+const getBusinessUsers = async (req, res) => {
+  try {
+    const db = getDb();
+    const result = await db.execute({
+      sql: 'SELECT * FROM users WHERE role = ? ORDER BY created_at DESC',
+      args: ['user']
+    });
+    res.json({ success: true, users: result.rows });
+  } catch (error) {
+    console.error('Get business users error:', error);
+    res.status(500).json({ error: 'Failed to get business users' });
+  }
+};
+
+// ==================== GET USER BY ID ====================
 const getUserById = async (req, res) => {
   try {
     const { id } = req.params;
     const db = getDb();
-    
     const result = await db.execute({
       sql: 'SELECT * FROM users WHERE id = ?',
       args: [id]
     });
-    
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
     res.json({ success: true, user: result.rows[0] });
   } catch (error) {
     console.error('Get user by id error:', error);
@@ -38,25 +51,28 @@ const getUserById = async (req, res) => {
   }
 };
 
-// Get user statistics
+// ==================== GET USER STATS ====================
 const getUserStats = async (req, res) => {
   try {
     const db = getDb();
-    
     const totalUsers = await db.execute({
-      sql: 'SELECT COUNT(*) as count FROM users'
+      sql: 'SELECT COUNT(*) as count FROM users WHERE role = ?',
+      args: ['user']
     });
-    
     const activeUsers = await db.execute({
-      sql: 'SELECT COUNT(*) as count FROM users WHERE is_active = 1'
+      sql: 'SELECT COUNT(*) as count FROM users WHERE role = ? AND is_active = 1',
+      args: ['user']
     });
-    
+    const totalEndUsers = await db.execute({
+      sql: 'SELECT COUNT(*) as count FROM end_users'
+    });
     res.json({
       success: true,
       stats: {
         totalUsers: totalUsers.rows[0]?.count || 0,
         activeUsers: activeUsers.rows[0]?.count || 0,
-        inactiveUsers: (totalUsers.rows[0]?.count || 0) - (activeUsers.rows[0]?.count || 0)
+        inactiveUsers: (totalUsers.rows[0]?.count || 0) - (activeUsers.rows[0]?.count || 0),
+        totalEndUsers: totalEndUsers.rows[0]?.count || 0
       }
     });
   } catch (error) {
@@ -65,160 +81,142 @@ const getUserStats = async (req, res) => {
   }
 };
 
-// Create new user
-const createUser = async (req, res) => {
+// ==================== CREATE BUSINESS USER (Admin Only - Hashes Password) ====================
+const createBusinessUser = async (req, res) => {
   try {
-    const { name, phone, email, password, is_active } = req.body;
-    
-    if (!name || !phone) {
-      return res.status(400).json({ error: 'Name and phone are required' });
+    if (req.userType !== 'admin') {
+      return res.status(403).json({ error: 'Only admin can create business users' });
     }
-    
-    const cleanPhone = phone.replace(/\D/g, '');
+
+    const { name, email, phone, password, business_name, is_active } = req.body;
+    console.log('📥 Creating business user:', { name, email, phone, business_name });
+    console.log('🔑 Password received:', password ? 'YES' : 'NO');
+
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Name, email and password are required' });
+    }
+
+    const cleanPhone = phone ? phone.replace(/\D/g, '') : null;
     const db = getDb();
-    
-    // Check if user exists
-    const existingUser = await db.execute({
-      sql: 'SELECT * FROM users WHERE phone_number = ?',
-      args: [cleanPhone]
+
+    // Check duplicates
+    const existingEmail = await db.execute({
+      sql: 'SELECT * FROM users WHERE email = ?',
+      args: [email]
     });
-    
-    if (existingUser.rows.length > 0) {
-      return res.status(400).json({ error: 'User already exists with this phone number' });
+    if (existingEmail.rows.length > 0) {
+      return res.status(400).json({ error: 'User already exists with this email' });
     }
-    
-    // Check email if provided
-    if (email) {
-      const existingEmail = await db.execute({
-        sql: 'SELECT * FROM users WHERE email = ?',
-        args: [email]
+    if (cleanPhone) {
+      const existingPhone = await db.execute({
+        sql: 'SELECT * FROM users WHERE phone_number = ?',
+        args: [cleanPhone]
       });
-      if (existingEmail.rows.length > 0) {
-        return res.status(400).json({ error: 'User already exists with this email' });
+      if (existingPhone.rows.length > 0) {
+        return res.status(400).json({ error: 'User already exists with this phone number' });
       }
     }
-    
-    // Create new user
+
     const userId = crypto.randomUUID();
+    const hashedPassword = await bcrypt.hash(password, 10);
+    console.log('🔑 Hashed password stored:', hashedPassword.substring(0, 20) + '...');
+
     await db.execute({
-      sql: `INSERT INTO users (id, name, phone_number, email, role, is_active) 
-            VALUES (?, ?, ?, ?, ?, ?)`,
-      args: [userId, name, cleanPhone, email || null, 'user', is_active !== undefined ? is_active : 1]
+      sql: `INSERT INTO users (id, name, email, phone_number, password, business_name, role, is_active) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        userId,
+        name,
+        email,
+        cleanPhone || null,
+        hashedPassword,
+        business_name || null,
+        'user',
+        is_active !== undefined ? is_active : 1
+      ]
     });
-    
-    // Get the created user
+
     const newUser = await db.execute({
-      sql: 'SELECT * FROM users WHERE id = ?',
+      sql: 'SELECT id, name, email, phone_number, business_name, role, is_active FROM users WHERE id = ?',
       args: [userId]
     });
-    
-    res.json({ 
-      success: true, 
-      message: 'User created successfully',
-      user: newUser.rows[0]
-    });
+
+    res.json({ success: true, message: 'Business user created successfully', user: newUser.rows[0] });
   } catch (error) {
-    console.error('Create user error:', error);
-    res.status(500).json({ error: 'Failed to create user: ' + error.message });
+    console.error('Create business user error:', error);
+    res.status(500).json({ error: 'Failed to create business user: ' + error.message });
   }
 };
 
-// Update user
+// ==================== UPDATE USER ====================
 const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, phone, email, is_active } = req.body;
+    const { name, phone, email, is_active, business_name, password } = req.body;
     const db = getDb();
     
-    // Check if user exists
     const existingUser = await db.execute({
       sql: 'SELECT * FROM users WHERE id = ?',
       args: [id]
     });
-    
     if (existingUser.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
-    // Build update query
+
     const updates = [];
     const values = [];
-    
-    if (name) {
-      updates.push('name = ?');
-      values.push(name);
-    }
-    if (phone) {
+    if (name) { updates.push('name = ?'); values.push(name); }
+    if (phone) { 
       const cleanPhone = phone.replace(/\D/g, '');
-      updates.push('phone_number = ?');
-      values.push(cleanPhone);
+      updates.push('phone_number = ?'); 
+      values.push(cleanPhone); 
     }
-    if (email !== undefined) {
-      updates.push('email = ?');
-      values.push(email);
-    }
-    if (is_active !== undefined) {
-      updates.push('is_active = ?');
-      values.push(is_active ? 1 : 0);
+    if (email !== undefined) { updates.push('email = ?'); values.push(email); }
+    if (is_active !== undefined) { updates.push('is_active = ?'); values.push(is_active ? 1 : 0); }
+    if (business_name !== undefined) { updates.push('business_name = ?'); values.push(business_name); }
+    if (password) {
+      const hashed = await bcrypt.hash(password, 10);
+      updates.push('password = ?');
+      values.push(hashed);
     }
     
     if (updates.length === 0) {
       return res.json({ success: true, message: 'No changes made' });
     }
     
-    updates.push('updated_at = CURRENT_TIMESTAMP');
     values.push(id);
-    
     await db.execute({
       sql: `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
       args: values
     });
     
-    // Get updated user
     const updatedUser = await db.execute({
       sql: 'SELECT * FROM users WHERE id = ?',
       args: [id]
     });
-    
-    res.json({
-      success: true,
-      message: 'User updated successfully',
-      user: updatedUser.rows[0]
-    });
+    res.json({ success: true, message: 'User updated successfully', user: updatedUser.rows[0] });
   } catch (error) {
     console.error('Update user error:', error);
     res.status(500).json({ error: 'Failed to update user' });
   }
 };
 
-// Delete user
+// ==================== DELETE USER ====================
 const deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
     const db = getDb();
-    
-    // Check if user exists
     const existingUser = await db.execute({
       sql: 'SELECT * FROM users WHERE id = ?',
       args: [id]
     });
-    
     if (existingUser.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
-    // Delete OTPs first (foreign key constraint)
-    await db.execute({
-      sql: 'DELETE FROM otps WHERE user_id = ?',
-      args: [id]
-    });
-    
-    // Delete user
-    await db.execute({
-      sql: 'DELETE FROM users WHERE id = ?',
-      args: [id]
-    });
-    
+    await db.execute({ sql: 'DELETE FROM otps WHERE user_id = ?', args: [id] });
+    await db.execute({ sql: 'DELETE FROM user_services WHERE user_id = ?', args: [id] });
+    await db.execute({ sql: 'DELETE FROM end_users WHERE user_id = ?', args: [id] });
+    await db.execute({ sql: 'DELETE FROM users WHERE id = ?', args: [id] });
     res.json({ success: true, message: 'User deleted successfully' });
   } catch (error) {
     console.error('Delete user error:', error);
@@ -226,11 +224,98 @@ const deleteUser = async (req, res) => {
   }
 };
 
+// ==================== DELETE BUSINESS USER ====================
+const deleteBusinessUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const db = getDb();
+    const existingUser = await db.execute({
+      sql: 'SELECT * FROM users WHERE id = ? AND role = ?',
+      args: [id, 'user']
+    });
+    if (existingUser.rows.length === 0) {
+      return res.status(404).json({ error: 'Business user not found' });
+    }
+    await db.execute({ sql: 'DELETE FROM user_services WHERE user_id = ?', args: [id] });
+    await db.execute({ sql: 'DELETE FROM end_users WHERE user_id = ?', args: [id] });
+    await db.execute({ sql: 'DELETE FROM users WHERE id = ?', args: [id] });
+    res.json({ success: true, message: 'Business user deleted successfully' });
+  } catch (error) {
+    console.error('Delete business user error:', error);
+    res.status(500).json({ error: 'Failed to delete business user' });
+  }
+};
+
+// ==================== GET ADMIN STATS ====================
+const getAdminStats = async (req, res) => {
+  try {
+    const db = getDb();
+    const [totalUsers, totalEndUsers, totalServices, totalUsage, activeBusinessUsers] = await Promise.all([
+      db.execute({ sql: 'SELECT COUNT(*) as count FROM users WHERE role = ?', args: ['user'] }),
+      db.execute({ sql: 'SELECT COUNT(*) as count FROM end_users' }),
+      db.execute({ sql: 'SELECT COUNT(*) as count FROM services' }),
+      db.execute({ sql: 'SELECT COUNT(*) as count FROM service_usage' }),
+      db.execute({ sql: 'SELECT COUNT(*) as count FROM users WHERE role = ? AND is_active = 1', args: ['user'] })
+    ]);
+    res.json({
+      success: true,
+      stats: {
+        totalUsers: totalUsers.rows[0]?.count || 0,
+        totalEndUsers: totalEndUsers.rows[0]?.count || 0,
+        totalServices: totalServices.rows[0]?.count || 0,
+        totalUsage: totalUsage.rows[0]?.count || 0,
+        activeBusinessUsers: activeBusinessUsers.rows[0]?.count || 0
+      }
+    });
+  } catch (error) {
+    console.error('Get admin stats error:', error);
+    res.status(500).json({ error: 'Failed to get stats' });
+  }
+};
+
+// ==================== TOGGLE USER STATUS ====================
+const toggleUserStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const db = getDb();
+    const existingUser = await db.execute({
+      sql: 'SELECT * FROM users WHERE id = ?',
+      args: [id]
+    });
+    if (existingUser.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const currentStatus = existingUser.rows[0].is_active;
+    const newStatus = currentStatus === 1 ? 0 : 1;
+    await db.execute({
+      sql: 'UPDATE users SET is_active = ? WHERE id = ?',
+      args: [newStatus, id]
+    });
+    const updatedUser = await db.execute({
+      sql: 'SELECT * FROM users WHERE id = ?',
+      args: [id]
+    });
+    res.json({
+      success: true,
+      message: `User ${newStatus === 1 ? 'activated' : 'deactivated'} successfully`,
+      user: updatedUser.rows[0]
+    });
+  } catch (error) {
+    console.error('Toggle user status error:', error);
+    res.status(500).json({ error: 'Failed to toggle user status' });
+  }
+};
+
+// ==================== EXPORTS ====================
 module.exports = {
   getAllUsers,
+  getBusinessUsers,
   getUserById,
   getUserStats,
-  createUser,
+  createBusinessUser,    // ✅ Business User – WITH hashed password
   updateUser,
   deleteUser,
+  deleteBusinessUser,
+  getAdminStats,
+  toggleUserStatus
 };
