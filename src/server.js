@@ -34,14 +34,10 @@ const startServer = async () => {
     await initDatabase();
     app.listen(PORT, () => {
       console.log(`\n=========================================`);
-      console.log(`🚀 Server running on http://localhost:${PORT}`);
+      console.log(` Server running on http://localhost:${PORT}`);
       console.log(`=========================================`);
-      console.log(`🔐 Endpoints:`);
-      console.log(`   Admin: /api/auth/admin/login`);
-      console.log(`   Business: /api/auth/user/login`);
-      console.log(`   EndUser: /api/enduser/login`);
-      console.log(`   EndUser Usage: /api/enduser/usage`);
-      console.log(`=========================================\n`);
+    
+
     });
   } catch (error) {
     console.error('Failed to start server:', error);
